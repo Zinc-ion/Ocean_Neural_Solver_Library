@@ -1161,3 +1161,28 @@ class poc_flux(object):
         print(f"输入时间步: {self.T_in}, 输出时间步: {self.T_out}")
         
         return train_loader, test_loader, shapelist
+
+class ocean_soda(object):
+    """
+    包装类，用于匹配现有的数据加载框架接口
+    """
+    def __init__(self, args):
+        self.data_path = args.data_path
+        self.T_in = args.T_in
+        self.T_out = args.T_out
+        self.seq_len = args.T_in + args.T_out
+        self.img_size = args.img_size if hasattr(args, 'img_size') else 128
+        self.batch_size = args.batch_size
+        self.train_ratio = args.train_ratio if hasattr(args, 'train_ratio') else 0.8
+        self.valid_ratio = getattr(args, 'valid_ratio', 0.1)
+        
+        # 裁剪配置(如果需要)
+        self.crop_config = None
+        # 修改：同时检查属性存在 且 值不为None
+        if hasattr(args, 'crop_top') and args.crop_top is not None:
+            self.crop_config = {
+                'top': int(args.crop_top),       # 建议强制转为 int，防止类型错误
+                'left': int(args.crop_left),
+                'height': int(args.crop_height),
+                'width': int(args.crop_width)
+            }
