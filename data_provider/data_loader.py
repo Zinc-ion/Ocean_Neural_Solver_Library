@@ -757,3 +757,407 @@ class cfd3d(object):
         
         return train_loader, test_loader, [s1, s2, s3]
     
+
+
+import os
+import glob
+import netCDF4 as nc
+import torch
+import numpy as np
+from torch.utils.data import Dataset
+from tqdm import tqdm
+import torchvision.transforms.functional as TF
+
+
+class PocFluxDataset(Dataset):
+    """
+    用于海洋碳通量数据的PyTorch数据集类
+    输出格式兼容现有框架: (pos, input_data, output_data)
+    内部保存mask用于评估时过滤缺失值
+    """
+    def __init__(self, mode, data_path, seq_len, img_size, 
+                 T_in=1, T_out=1,
+                 need_name=False, 
+                 train_ratio=0.8, valid_ratio=0.1, 
+                 precomputed_norm_params=None,
+                 crop_config=None):
+        """
+        初始化数据集
+        
+        参数说明:
+        - mode: 'train', 'valid', 或 'test'
+        - data_path: NetCDF数据根目录
+        - seq_len: 总时间序列长度 (T_in + T_out)
+        - img_size: 输出正方形图像尺寸
+        - T_in: 输入时间步数
+        - T_out: 输出时间步数
+        - need_name: 是否返回文件名
+        - train_ratio/valid_ratio: 数据集划分比例
+        - precomputed_norm_params: 预计算的归一化参数 {'min_val': x, 'max_val': y}
+        - crop_config: 裁剪配置 {'top': x, 'left': y, 'height': h, 'width': w}
+        """
+        super().__init__()
+        assert mode in ['train', 'valid', 'test'], "Mode must be one of ['train', 'valid', 'test']"
+        
+        self.mode = mode
+        self.data_path = data_path
+        self.seq_len = seq_len
+        self.img_size = img_size
+        self.T_in = T_in
+        self.T_out = T_out
+        self.need_name = need_name
+        self.crop_config = crop_config
+
+        # 加载数据标识
+        all_data_identifiers = self._load_keys()
+        if not all_data_identifiers:
+            raise FileNotFoundError(f"在路径 {self.data_path} 下没有找到任何 NetCDF 数据")
+            
+        # 创建样本
+        all_samples = self._create_all_samples(all_data_identifiers)
+
+        # 数据集划分
+        num_samples = len(all_samples)
+        train_end = int(num_samples * train_ratio)
+        valid_end = int(num_samples * (train_ratio + valid_ratio))
+
+        if self.mode == 'train':
+            self.samples = all_samples[:train_end]
+        elif self.mode == 'valid':
+            self.samples = all_samples[train_end:valid_end]
+        else:
+            self.samples = all_samples[valid_end:]
+
+        # 归一化参数
+        if precomputed_norm_params:
+            self.min_val = precomputed_norm_params['min_val']
+            self.max_val = precomputed_norm_params['max_val']
+            print(f"模式 '{self.mode}' 加载完成，使用预计算的归一化参数。共 {len(self.samples)} 个样本。")
+        else:
+            print(f"模式 '{self.mode}' 加载中, 需要计算归一化参数...")
+            train_samples_for_norm = all_samples[:train_end]
+            self.min_val, self.max_val = self._calculate_normalization_params(train_samples_for_norm)
+        
+        if self.mode == 'train':
+            print(f"数据归一化范围 (min, max): ({self.min_val:.4f}, {self.max_val:.4f})")
+        
+        # 创建位置网格 (只创建一次)
+        self._create_position_grid()
+
+    def _create_position_grid(self):
+        """创建标准化的位置网格 [0,1] x [0,1]"""
+        x = torch.linspace(0, 1, self.img_size)
+        y = torch.linspace(0, 1, self.img_size)
+        grid_y, grid_x = torch.meshgrid(y, x, indexing='ij')
+        # shape: (H, W, 2)
+        self.pos_grid = torch.stack([grid_x, grid_y], dim=-1)
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        """
+        获取一个样本
+        
+        返回格式兼容 Exp_Steady:
+        - pos: (N, 2) 位置坐标
+        - fx: (N, T_in) 输入观测值
+        - y: (N, T_out) 输出观测值
+        
+        同时内部保存mask信息供评估使用
+        """
+        sample_identifiers = self.samples[idx]
+        frames = []
+        masks = []
+        
+        # 裁剪配置
+        if self.crop_config:
+            top = self.crop_config['top']
+            left = self.crop_config['left']
+            height = self.crop_config['height']
+            width = self.crop_config['width']
+        
+        for nc_path, yyyymm_key in sample_identifiers:
+            try:
+                with nc.Dataset(nc_path, 'r') as ncfile:
+                    fgco2_var = ncfile.variables['fgco2']
+                    
+                    # 读取数据(带裁剪)
+                    if self.crop_config:
+                        frame_data = fgco2_var[0, top:top+height, left:left+width]
+                    else:
+                        frame_data = fgco2_var[0, :, :]
+
+                    frame_data = frame_data.astype(np.float32)
+                    
+                    # 创建掩码(在替换NaN之前)
+                    valid_mask = ~(np.isnan(frame_data) | (np.abs(frame_data) > 1e30))
+                    
+                    # 将无效数据替换为0用于模型输入
+                    frame_data = np.where(valid_mask, frame_data, 0.0)
+                    
+                    frames.append(frame_data)
+                    masks.append(valid_mask)
+            
+            except Exception as e:
+                print(f"读取文件 {nc_path} 时出错: {e}")
+                if self.crop_config:
+                    error_shape = (self.crop_config['height'], self.crop_config['width'])
+                else:
+                    error_shape = (713, 1440)
+                    if len(frames) > 0:
+                        error_shape = frames[0].shape
+                frames.append(np.zeros(error_shape, dtype=np.float32))
+                masks.append(np.zeros(error_shape, dtype=bool))
+
+        # 堆叠: (T, H, W)
+        data_array = np.stack(frames, axis=0)
+        mask_array = np.stack(masks, axis=0)
+        
+        # 数据归一化
+        epsilon = 1e-8
+        data_array = 2 * (data_array - self.min_val) / (self.max_val - self.min_val + epsilon) - 1
+        data_array = np.clip(data_array, -1, 1)
+        
+        # 转换为Tensor并增加通道维度: (T, H, W) -> (T, 1, H, W)
+        data_tensor = torch.as_tensor(data_array, dtype=torch.float).unsqueeze(1)
+        mask_tensor = torch.as_tensor(mask_array, dtype=torch.bool).unsqueeze(1)
+        
+        # 填充为正方形
+        _t, _c, h, w = data_tensor.shape
+        if h != w:
+            padding_left = (max(h, w) - w) // 2
+            padding_right = max(h, w) - w - padding_left
+            padding_top = (max(h, w) - h) // 2
+            padding_bottom = max(h, w) - h - padding_top
+            
+            data_tensor = TF.pad(data_tensor, 
+                                [padding_left, padding_top, padding_right, padding_bottom], 
+                                fill=0)
+            mask_tensor = TF.pad(mask_tensor, 
+                                [padding_left, padding_top, padding_right, padding_bottom], 
+                                fill=False)
+
+        # 缩放到目标尺寸
+        data_tensor = TF.resize(data_tensor, [self.img_size, self.img_size], 
+                               interpolation=TF.InterpolationMode.BILINEAR, 
+                               antialias=True)
+        
+        mask_tensor = TF.resize(mask_tensor.float(), [self.img_size, self.img_size], 
+                               interpolation=TF.InterpolationMode.NEAREST)
+        mask_tensor = mask_tensor.bool()
+        
+        # 分离输入和输出
+        # data_tensor shape: (T, 1, H, W)
+        input_frames = data_tensor[:self.T_in]  # (T_in, 1, H, W)
+        output_frames = data_tensor[self.T_in:self.T_in+self.T_out]  # (T_out, 1, H, W)
+        output_mask = mask_tensor[self.T_in:self.T_in+self.T_out]  # (T_out, 1, H, W)
+        
+        # 转换为 (N, T_in) 和 (N, T_out) 格式
+        # N = H * W
+        N = self.img_size * self.img_size
+        
+        # pos: (H, W, 2) -> (N, 2)
+        pos = self.pos_grid.reshape(N, 2)
+        
+        # fx: (T_in, 1, H, W) -> (N, T_in)
+        fx = input_frames.squeeze(1).reshape(self.T_in, N).permute(1, 0)  # (N, T_in)
+        
+        # y: (T_out, 1, H, W) -> (N, T_out)
+        y = output_frames.squeeze(1).reshape(self.T_out, N).permute(1, 0)  # (N, T_out)
+        
+        # mask: (T_out, 1, H, W) -> (N, T_out)
+        mask = output_mask.squeeze(1).reshape(self.T_out, N).permute(1, 0)  # (N, T_out)
+        
+        # 返回格式: (pos, fx, y), 并将mask保存在y中
+        # 我们使用一个技巧: 将mask信息编码到tensor的属性中
+        # y.mask = mask  # 添加mask属性用于评估
+        
+        return pos, fx, y, mask
+
+    def _load_keys(self):
+        """扫描并加载所有NetCDF文件路径和月份标识"""
+        search_pattern = os.path.join(self.data_path, "**", "*.nc")
+        nc_files = sorted(glob.glob(search_pattern, recursive=True))
+        
+        monthly_identifiers = []
+        print(f"发现 {len(nc_files)} 个NetCDF文件，正在扫描...")
+        
+        for nc_path in tqdm(nc_files, desc="扫描NetCDF文件"):
+            try:
+                filename = os.path.basename(nc_path)
+                yyyymm = filename.split('_')[-1].replace('.nc', '')
+                
+                with nc.Dataset(nc_path, 'r') as ncfile:
+                    if 'fgco2' in ncfile.variables:
+                        monthly_identifiers.append((nc_path, yyyymm))
+                    else:
+                        print(f"警告: 文件 {nc_path} 中没有 'fgco2' 变量")
+                        
+            except Exception as e:
+                print(f"警告: 无法读取文件 {nc_path}: {e}")
+
+        monthly_identifiers.sort(key=lambda x: x[1])
+        print(f"共找到 {len(monthly_identifiers)} 个有效月度数据。")
+        return monthly_identifiers
+
+    def _create_all_samples(self, data_list):
+        """根据序列长度创建滑动窗口样本"""
+        num_frames = len(data_list)
+        if num_frames < self.seq_len:
+            raise ValueError(f"数据总帧数({num_frames})小于序列长度({self.seq_len})")
+        samples = []
+        for i in range(num_frames - self.seq_len + 1):
+            samples.append(data_list[i : i + self.seq_len])
+        return samples
+        
+    def _calculate_normalization_params(self, train_samples):
+        """基于训练集计算归一化参数(仅在有效数据区域)"""
+        print("正在基于训练集计算归一化参数(忽略NaN和填充值)...")
+        min_val, max_val = np.inf, -np.inf
+        
+        unique_train_data = sorted(list(set(item for sample in train_samples for item in sample)))
+        
+        if self.crop_config:
+            top = self.crop_config['top']
+            left = self.crop_config['left']
+            height = self.crop_config['height']
+            width = self.crop_config['width']
+            print(f"将在裁剪区域 [T:{top}, L:{left}, H:{height}, W:{width}] 内计算")
+        
+        for nc_path, yyyymm_key in tqdm(unique_train_data, desc="计算归一化参数"):
+            try:
+                with nc.Dataset(nc_path, 'r') as ncfile:
+                    fgco2_var = ncfile.variables['fgco2']
+                    
+                    if self.crop_config:
+                        frame_data = fgco2_var[0, top:top+height, left:left+width]
+                    else:
+                        frame_data = fgco2_var[0, :, :]
+                    
+                    valid_mask = ~(np.isnan(frame_data) | (np.abs(frame_data) > 1e30))
+                    
+                    if valid_mask.any():
+                        valid_data = frame_data[valid_mask]
+                        min_val = min(min_val, valid_data.min())
+                        max_val = max(max_val, valid_data.max())
+                        
+            except Exception as e:
+                print(f"警告: 跳过 {nc_path} (原因: {e})")
+
+        return min_val, max_val
+
+
+class poc_flux(object):
+    """
+    包装类，用于匹配现有的数据加载框架接口
+    """
+    def __init__(self, args):
+        self.data_path = args.data_path
+        self.T_in = args.T_in
+        self.T_out = args.T_out
+        self.seq_len = args.T_in + args.T_out
+        self.img_size = args.img_size if hasattr(args, 'img_size') else 128
+        self.batch_size = args.batch_size
+        self.train_ratio = args.train_ratio if hasattr(args, 'train_ratio') else 0.8
+        self.valid_ratio = getattr(args, 'valid_ratio', 0.1)
+        
+        # 裁剪配置(如果需要)
+        self.crop_config = None
+        # 修改：同时检查属性存在 且 值不为None
+        if hasattr(args, 'crop_top') and args.crop_top is not None:
+            self.crop_config = {
+                'top': int(args.crop_top),       # 建议强制转为 int，防止类型错误
+                'left': int(args.crop_left),
+                'height': int(args.crop_height),
+                'width': int(args.crop_width)
+            }
+        
+        # 先创建训练集以计算归一化参数
+        print("正在加载训练数据集...")
+        train_dataset_temp = PocFluxDataset(
+            mode='train',
+            data_path=self.data_path,
+            seq_len=self.seq_len,
+            img_size=self.img_size,
+            T_in=self.T_in,
+            T_out=self.T_out,
+            need_name=False,
+            train_ratio=self.train_ratio,
+            valid_ratio=self.valid_ratio,
+            precomputed_norm_params=None,
+            crop_config=self.crop_config
+        )
+        
+        # 保存归一化参数
+        self.norm_params = {
+            'min_val': train_dataset_temp.min_val,
+            'max_val': train_dataset_temp.max_val
+        }
+        
+        # POC flux数据集不需要y_normalizer (数据已经归一化到[-1,1])
+        self.y_normalizer = None
+
+    def get_loader(self):
+        """
+        返回训练和测试数据加载器以及shape信息
+        
+        返回格式: train_loader, test_loader, shapelist
+        """
+        # 创建训练数据集
+        train_dataset = PocFluxDataset(
+            mode='train',
+            data_path=self.data_path,
+            seq_len=self.seq_len,
+            img_size=self.img_size,
+            T_in=self.T_in,
+            T_out=self.T_out,
+            need_name=False,
+            train_ratio=self.train_ratio,
+            valid_ratio=self.valid_ratio,
+            precomputed_norm_params=self.norm_params,
+            crop_config=self.crop_config
+        )
+        
+        # 创建测试数据集
+        test_dataset = PocFluxDataset(
+            mode='test',
+            data_path=self.data_path,
+            seq_len=self.seq_len,
+            img_size=self.img_size,
+            T_in=self.T_in,
+            T_out=self.T_out,
+            need_name=False,
+            train_ratio=self.train_ratio,
+            valid_ratio=self.valid_ratio,
+            precomputed_norm_params=self.norm_params,
+            crop_config=self.crop_config
+        )
+        
+        # 创建DataLoader
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True
+        )
+        
+        test_loader = torch.utils.data.DataLoader(
+            test_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True
+        )
+        
+        # shapelist: [img_size, img_size] 用于2D数据
+        shapelist = [self.img_size, self.img_size]
+        
+        print("数据加载完成。")
+        print(f"训练样本数: {len(train_dataset)}")
+        print(f"测试样本数: {len(test_dataset)}")
+        print(f"图像尺寸: {self.img_size}x{self.img_size}")
+        print(f"输入时间步: {self.T_in}, 输出时间步: {self.T_out}")
+        
+        return train_loader, test_loader, shapelist

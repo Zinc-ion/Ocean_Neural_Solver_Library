@@ -24,9 +24,10 @@ parser.add_argument('--step_size', type=int, default=100, help='step size for St
 parser.add_argument('--gamma', type=float, default=0.5, help='decay parameter for StepLR scheduler')
 
 ## data
-parser.add_argument('--data_path', type=str, default='/data/fno/', help='data folder')
-parser.add_argument('--loader', type=str, default='airfoil', help='type of data loader')
+parser.add_argument('--data_path', type=str, default='/data/fcj/cdsd/data/SCO2', help='data folder')
+parser.add_argument('--loader', type=str, default='poc_flux', help='type of data loader')
 parser.add_argument('--train_ratio', type=float, default=0.8, help='training data ratio')
+parser.add_argument('--valid_ratio', type=float, default=0.1, help='validation data ratio')
 parser.add_argument('--ntrain', type=int, default=1000, help='training data numbers')
 parser.add_argument('--ntest', type=int, default=200, help='test data numbers')
 parser.add_argument('--normalize', type=bool, default=False, help='make normalization to output')
@@ -44,14 +45,21 @@ parser.add_argument('--downsampley', type=int, default=1, help='downsample rate 
 parser.add_argument('--downsamplez', type=int, default=1, help='downsample rate in z-axis')
 parser.add_argument('--radius', type=float, default=0.2, help='for construct geometry')
 
+## POC Flux specific parameters
+parser.add_argument('--img_size', type=int, default=256, help='image size for POC flux data')
+parser.add_argument('--crop_top', type=int, default=None, help='crop top for POC flux')
+parser.add_argument('--crop_left', type=int, default=None, help='crop left for POC flux')
+parser.add_argument('--crop_height', type=int, default=None, help='crop height for POC flux')
+parser.add_argument('--crop_width', type=int, default=None, help='crop width for POC flux')
+
 ## task
-parser.add_argument('--task', type=str, default='steady',
-                    help='select from [steady, dynamic_autoregressive, dynamic_conditional]')
-parser.add_argument('--T_in', type=int, default=10, help='for input sequence')
-parser.add_argument('--T_out', type=int, default=10, help='for output sequence')
+parser.add_argument('--task', type=str, default='poc_flux',
+                    help='select from [steady, steady_design, dynamic_autoregressive, dynamic_conditional, poc_flux]')
+parser.add_argument('--T_in', type=int, default=3, help='for input sequence')
+parser.add_argument('--T_out', type=int, default=3, help='for output sequence')
 
 ## models
-parser.add_argument('--model', type=str, default='Transolver')
+parser.add_argument('--model', type=str, default='FNO')
 parser.add_argument('--n_hidden', type=int, default=64, help='hidden dim')
 parser.add_argument('--n_layers', type=int, default=3, help='layers')
 parser.add_argument('--n_heads', type=int, default=4, help='number of heads')
@@ -93,6 +101,9 @@ def main():
     elif args.task == 'dynamic_conditional':
         from exp.exp_dynamic_conditional import Exp_Dynamic_Conditional
         exp = Exp_Dynamic_Conditional(args)
+    elif args.task == 'poc_flux':
+        from exp.exp_poc_flux import Exp_POC_Flux
+        exp = Exp_POC_Flux(args)
     else:
         raise NotImplementedError
 
