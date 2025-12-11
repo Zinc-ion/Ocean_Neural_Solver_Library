@@ -1171,13 +1171,15 @@ class OceanSodaDataset(Dataset):
     输出格式兼容现有框架: (pos, input_data, output_data)
     内部保存mask用于评估时过滤缺失值
     支持包含多个时间步的NetCDF文件
+    支持全量数据缓存到内存 (cache_data=True)
     """
     def __init__(self, mode, data_path, seq_len, img_size, 
                  T_in=1, T_out=1,
                  need_name=False, 
                  train_ratio=0.8, valid_ratio=0.1, 
                  precomputed_norm_params=None,
-                 crop_config=None):
+                 crop_config=None,
+                 cache_data=True):
         """
         初始化数据集
         
@@ -1192,6 +1194,7 @@ class OceanSodaDataset(Dataset):
         - train_ratio/valid_ratio: 数据集划分比例
         - precomputed_norm_params: 预计算的归一化参数 {'min_val': x, 'max_val': y}
         - crop_config: 裁剪配置 {'top': x, 'left': y, 'height': h, 'width': w}
+        - cache_data: 是否将所有数据加载到内存中 (建议内存充足时开启)
         """
         super().__init__()
         assert mode in ['train', 'valid', 'test'], "Mode must be one of ['train', 'valid', 'test']"
@@ -1204,14 +1207,26 @@ class OceanSodaDataset(Dataset):
         self.T_out = T_out
         self.need_name = need_name
         self.crop_config = crop_config
+        self.cache_data = cache_data
 
         # 加载数据标识 (文件路径, 时间索引)
-        all_data_identifiers = self._load_keys()
-        if not all_data_identifiers:
+        self.all_identifiers = self._load_keys()
+        if not self.all_identifiers:
             raise FileNotFoundError(f"在路径 {self.data_path} 下没有找到任何 NetCDF 数据")
+
+        # 如果启用缓存，加载所有数据到内存
+        self.cached_data = None
+        self.cached_masks = None
+        if self.cache_data:
+            self._load_cache()
+            # 缓存模式下，样本由索引组成
+            source_data = list(range(len(self.all_identifiers)))
+        else:
+            # 非缓存模式下，样本由(path, idx)组成
+            source_data = self.all_identifiers
             
-        # 创建样本
-        all_samples = self._create_all_samples(all_data_identifiers)
+        # 创建样本 (滑动窗口)
+        all_samples = self._create_all_samples(source_data)
 
         # 数据集划分
         num_samples = len(all_samples)
@@ -1232,14 +1247,103 @@ class OceanSodaDataset(Dataset):
             print(f"模式 '{self.mode}' 加载完成，使用预计算的归一化参数。共 {len(self.samples)} 个样本。")
         else:
             print(f"模式 '{self.mode}' 加载中, 需要计算归一化参数...")
-            train_samples_for_norm = all_samples[:train_end]
-            self.min_val, self.max_val = self._calculate_normalization_params(train_samples_for_norm)
+            # 计算归一化参数
+            if self.cache_data:
+                # 缓存模式下直接基于缓存数据计算(仅使用训练集部分的数据)
+                # 注意：self.samples存储的是索引列表，我们需要确定训练集涵盖的时间步范围
+                # 简单起见，我们取训练样本中涉及的所有时间步
+                if len(self.samples) > 0:
+                    # 假设samples是连续的滑动窗口，取第一个样本的开始到最后一个样本的结束
+                    start_idx = self.samples[0][0]
+                    end_idx = self.samples[-1][-1] + 1
+                    train_data_slice = self.cached_data[start_idx:end_idx]
+                    train_mask_slice = self.cached_masks[start_idx:end_idx]
+                    
+                    valid_data = train_data_slice[train_mask_slice]
+                    self.min_val = valid_data.min()
+                    self.max_val = valid_data.max()
+                else:
+                    self.min_val, self.max_val = 0, 1 # Fallback
+            else:
+                train_samples_for_norm = all_samples[:train_end]
+                self.min_val, self.max_val = self._calculate_normalization_params(train_samples_for_norm)
         
         if self.mode == 'train':
             print(f"数据归一化范围 (min, max): ({self.min_val:.4f}, {self.max_val:.4f})")
         
         # 创建位置网格 (只创建一次)
         self._create_position_grid()
+
+    def _load_cache(self):
+        """将所有数据加载到内存中"""
+        print("正在将所有数据加载到内存中 (cache_data=True)...")
+        
+        # 按文件分组以减少文件打开次数
+        from collections import defaultdict
+        file_to_indices = defaultdict(list)
+        for global_idx, (nc_path, t_idx) in enumerate(self.all_identifiers):
+            file_to_indices[nc_path].append((t_idx, global_idx))
+            
+        # 预分配内存
+        # 获取第一个文件来确定shape
+        first_path = self.all_identifiers[0][0]
+        with nc.Dataset(first_path, 'r') as ncfile:
+            if self.crop_config:
+                h = self.crop_config['height']
+                w = self.crop_config['width']
+            else:
+                # 动态获取shape
+                shape = ncfile.variables['fgco2'].shape
+                h, w = shape[-2], shape[-1]
+                
+        total_frames = len(self.all_identifiers)
+        print(f"总帧数: {total_frames}, 帧尺寸: {h}x{w}")
+        
+        self.cached_data = np.zeros((total_frames, h, w), dtype=np.float32)
+        self.cached_masks = np.zeros((total_frames, h, w), dtype=bool)
+        
+        if self.crop_config:
+            top = self.crop_config['top']
+            left = self.crop_config['left']
+            height = self.crop_config['height']
+            width = self.crop_config['width']
+        
+        for nc_path in tqdm(sorted(file_to_indices.keys()), desc="加载文件到内存"):
+            try:
+                indices_map = file_to_indices[nc_path] # list of (t_idx, global_idx)
+                # 排序以优化读取
+                indices_map.sort(key=lambda x: x[0])
+                
+                with nc.Dataset(nc_path, 'r') as ncfile:
+                    fgco2_var = ncfile.variables['fgco2']
+                    
+                    # 批量读取优化：如果读取的是连续的大块数据，可以直接切片
+                    # 但为了通用性，我们这里还是逐帧或按需读取
+                    # 考虑到内存足够，且文件不大，我们可以一次性读取整个变量然后切片
+                    # 但这可能消耗额外内存。既然用户内存1T，这完全不是问题。
+                    
+                    # 读取整个文件的数据到临时内存
+                    if self.crop_config:
+                        full_data = fgco2_var[:, top:top+height, left:left+width]
+                    else:
+                        full_data = fgco2_var[:] # (Time, H, W)
+                        
+                    # 填充到cached_data
+                    for t_idx, global_idx in indices_map:
+                        if t_idx < full_data.shape[0]:
+                            frame_data = full_data[t_idx]
+                            
+                            # 处理NaN
+                            valid_mask = ~(np.isnan(frame_data) | (np.abs(frame_data) > 1e30))
+                            frame_data = np.where(valid_mask, frame_data, 0.0)
+                            
+                            self.cached_data[global_idx] = frame_data
+                            self.cached_masks[global_idx] = valid_mask
+                        else:
+                            print(f"警告: 索引 {t_idx} 超出文件 {nc_path} 范围")
+                            
+            except Exception as e:
+                print(f"读取文件 {nc_path} 失败: {e}")
 
     def _create_position_grid(self):
         """创建标准化的位置网格 [0,1] x [0,1]"""
@@ -1255,61 +1359,59 @@ class OceanSodaDataset(Dataset):
     def __getitem__(self, idx):
         """
         获取一个样本
-        
-        返回格式兼容 Exp_Steady:
-        - pos: (N, 2) 位置坐标
-        - fx: (N, T_in) 输入观测值
-        - y: (N, T_out) 输出观测值
-        
-        同时内部保存mask信息供评估使用
         """
-        sample_identifiers = self.samples[idx]
-        frames = []
-        masks = []
+        sample_info = self.samples[idx]
         
-        # 裁剪配置
-        if self.crop_config:
-            top = self.crop_config['top']
-            left = self.crop_config['left']
-            height = self.crop_config['height']
-            width = self.crop_config['width']
-        
-        for nc_path, time_idx in sample_identifiers:
-            try:
-                with nc.Dataset(nc_path, 'r') as ncfile:
-                    fgco2_var = ncfile.variables['fgco2']
-                    
-                    # 读取数据(带裁剪)
-                    if self.crop_config:
-                        frame_data = fgco2_var[time_idx, top:top+height, left:left+width]
-                    else:
-                        frame_data = fgco2_var[time_idx, :, :]
-
-                    frame_data = frame_data.astype(np.float32)
-                    
-                    # 创建掩码(在替换NaN之前)
-                    valid_mask = ~(np.isnan(frame_data) | (np.abs(frame_data) > 1e30))
-                    
-                    # 将无效数据替换为0用于模型输入
-                    frame_data = np.where(valid_mask, frame_data, 0.0)
-                    
-                    frames.append(frame_data)
-                    masks.append(valid_mask)
+        if self.cache_data:
+            # 缓存模式: sample_info 是索引列表 [t, t+1, ...]
+            # 优化: 假设是连续的，直接切片
+            start_idx = sample_info[0]
+            end_idx = sample_info[-1] + 1
             
-            except Exception as e:
-                print(f"读取文件 {nc_path} (time_idx={time_idx}) 时出错: {e}")
-                if self.crop_config:
-                    error_shape = (self.crop_config['height'], self.crop_config['width'])
-                else:
-                    error_shape = (713, 1440) # 默认fallback, 实际应该动态获取
-                    if len(frames) > 0:
-                        error_shape = frames[0].shape
-                frames.append(np.zeros(error_shape, dtype=np.float32))
-                masks.append(np.zeros(error_shape, dtype=bool))
+            # (T, H, W)
+            data_array = self.cached_data[start_idx:end_idx].copy() # copy以防修改原数据
+            mask_array = self.cached_masks[start_idx:end_idx].copy()
+            
+        else:
+            # 磁盘读取模式: sample_info 是 (path, time_idx) 列表
+            frames = []
+            masks = []
+            
+            if self.crop_config:
+                top = self.crop_config['top']
+                left = self.crop_config['left']
+                height = self.crop_config['height']
+                width = self.crop_config['width']
+            
+            for nc_path, time_idx in sample_info:
+                try:
+                    with nc.Dataset(nc_path, 'r') as ncfile:
+                        fgco2_var = ncfile.variables['fgco2']
+                        
+                        if self.crop_config:
+                            frame_data = fgco2_var[time_idx, top:top+height, left:left+width]
+                        else:
+                            frame_data = fgco2_var[time_idx, :, :]
 
-        # 堆叠: (T, H, W)
-        data_array = np.stack(frames, axis=0)
-        mask_array = np.stack(masks, axis=0)
+                        frame_data = frame_data.astype(np.float32)
+                        valid_mask = ~(np.isnan(frame_data) | (np.abs(frame_data) > 1e30))
+                        frame_data = np.where(valid_mask, frame_data, 0.0)
+                        
+                        frames.append(frame_data)
+                        masks.append(valid_mask)
+                
+                except Exception as e:
+                    print(f"读取出错: {e}")
+                    # Error handling...
+                    if len(frames) > 0:
+                        shape = frames[0].shape
+                    else:
+                        shape = (720, 1440) 
+                    frames.append(np.zeros(shape, dtype=np.float32))
+                    masks.append(np.zeros(shape, dtype=bool))
+
+            data_array = np.stack(frames, axis=0)
+            mask_array = np.stack(masks, axis=0)
         
         # 数据归一化
         epsilon = 1e-8
@@ -1345,30 +1447,15 @@ class OceanSodaDataset(Dataset):
         mask_tensor = mask_tensor.bool()
         
         # 分离输入和输出
-        # data_tensor shape: (T, 1, H, W)
-        input_frames = data_tensor[:self.T_in]  # (T_in, 1, H, W)
-        output_frames = data_tensor[self.T_in:self.T_in+self.T_out]  # (T_out, 1, H, W)
-        output_mask = mask_tensor[self.T_in:self.T_in+self.T_out]  # (T_out, 1, H, W)
+        input_frames = data_tensor[:self.T_in]
+        output_frames = data_tensor[self.T_in:self.T_in+self.T_out]
+        output_mask = mask_tensor[self.T_in:self.T_in+self.T_out]
         
-        # 转换为 (N, T_in) 和 (N, T_out) 格式
-        # N = H * W
         N = self.img_size * self.img_size
-        
-        # pos: (H, W, 2) -> (N, 2)
         pos = self.pos_grid.reshape(N, 2)
-        
-        # fx: (T_in, 1, H, W) -> (N, T_in)
-        fx = input_frames.squeeze(1).reshape(self.T_in, N).permute(1, 0)  # (N, T_in)
-        
-        # y: (T_out, 1, H, W) -> (N, T_out)
-        y = output_frames.squeeze(1).reshape(self.T_out, N).permute(1, 0)  # (N, T_out)
-        
-        # mask: (T_out, 1, H, W) -> (N, T_out)
-        mask = output_mask.squeeze(1).reshape(self.T_out, N).permute(1, 0)  # (N, T_out)
-        
-        # 返回格式: (pos, fx, y), 并将mask保存在y中
-        # 我们使用一个技巧: 将mask信息编码到tensor的属性中
-        # y.mask = mask  # 添加mask属性用于评估
+        fx = input_frames.squeeze(1).reshape(self.T_in, N).permute(1, 0)
+        y = output_frames.squeeze(1).reshape(self.T_out, N).permute(1, 0)
+        mask = output_mask.squeeze(1).reshape(self.T_out, N).permute(1, 0)
         
         return pos, fx, y, mask
 
@@ -1488,8 +1575,11 @@ class ocean_soda(object):
         
         # 先创建训练集以计算归一化参数
         print("正在加载训练数据集...")
-
-                train_dataset_temp = OceanSODADataset(
+        
+        # 创建一个临时数据集用于计算归一化参数
+        # 注意: 即使是临时数据集，如果开启缓存也会加载所有数据
+        # 我们可以只在需要时开启缓存。这里为了获取归一化参数，加载一次是必要的。
+        train_dataset_temp = OceanSodaDataset(
             mode='train',
             data_path=self.data_path,
             seq_len=self.seq_len,
@@ -1500,7 +1590,8 @@ class ocean_soda(object):
             train_ratio=self.train_ratio,
             valid_ratio=self.valid_ratio,
             precomputed_norm_params=None,
-            crop_config=self.crop_config
+            crop_config=self.crop_config,
+            cache_data=True # 启用缓存加速计算
         )
         
         # 保存归一化参数
@@ -1519,7 +1610,7 @@ class ocean_soda(object):
         返回格式: train_loader, test_loader, shapelist
         """
         # 创建训练数据集
-        train_dataset = PocFluxDataset(
+        train_dataset = OceanSodaDataset(
             mode='train',
             data_path=self.data_path,
             seq_len=self.seq_len,
@@ -1530,11 +1621,12 @@ class ocean_soda(object):
             train_ratio=self.train_ratio,
             valid_ratio=self.valid_ratio,
             precomputed_norm_params=self.norm_params,
-            crop_config=self.crop_config
+            crop_config=self.crop_config,
+            cache_data=True
         )
         
         # 创建测试数据集
-        test_dataset = PocFluxDataset(
+        test_dataset = OceanSodaDataset(
             mode='test',
             data_path=self.data_path,
             seq_len=self.seq_len,
@@ -1545,7 +1637,8 @@ class ocean_soda(object):
             train_ratio=self.train_ratio,
             valid_ratio=self.valid_ratio,
             precomputed_norm_params=self.norm_params,
-            crop_config=self.crop_config
+            crop_config=self.crop_config,
+            cache_data=True
         )
         
         # 创建DataLoader
