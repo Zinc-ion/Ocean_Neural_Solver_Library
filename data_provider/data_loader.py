@@ -1311,9 +1311,22 @@ class OceanSodaDataset(Dataset):
             data_array = self.cached_data[start_idx:end_idx].copy()
             mask_array = self.cached_masks[start_idx:end_idx].copy()
         else:
-            # ... (磁盘读取逻辑，确保不 Resize/Pad，直接返回原始 numpy array) ...
-            # 为了简洁，这里省略磁盘读取的重复代码，逻辑与之前类似但去掉 resize
-            pass 
+            frames, masks = [], []
+            for (nc_path, t_idx) in sample_info:
+                with nc.Dataset(nc_path, 'r') as ncfile:
+                    fg = ncfile.variables['fgco2']
+                    if self.crop_config:
+                        top, left = self.crop_config['top'], self.crop_config['left']
+                        h, w = self.crop_config['height'], self.crop_config['width']
+                        frame = fg[t_idx, top:top+h, left:left+w]
+                    else:
+                        frame = fg[t_idx, :, :]
+                    frame = frame.astype(np.float32)
+                    valid = ~(np.isnan(frame) | (np.abs(frame) > 1e30))
+                    frames.append(np.where(valid, frame, 0.0))
+                    masks.append(valid)
+            data_array = np.stack(frames, axis=0)
+            mask_array = np.stack(masks, axis=0)
         
         # 归一化
         epsilon = 1e-8
@@ -1342,7 +1355,59 @@ class OceanSodaDataset(Dataset):
         
         return pos, fx, y, mask
 
-    # ... (保留 _load_keys, _create_all_samples, _calculate_normalization_params) ...
+    def __len__(self):
+        return len(self.samples)
+
+    def _load_keys(self):
+        search_pattern = os.path.join(self.data_path, "**", "*.nc")
+        nc_files = sorted(glob.glob(search_pattern, recursive=True))
+        identifiers = []
+        print(f"发现 {len(nc_files)} 个NetCDF文件，正在索引时间帧...")
+        for nc_path in nc_files:
+            try:
+                with nc.Dataset(nc_path, 'r') as ds:
+                    if 'fgco2' not in ds.variables:
+                        continue
+                    t_len = ds.variables['fgco2'].shape[0]
+                    for t_idx in range(t_len):
+                        identifiers.append((nc_path, t_idx))
+            except Exception as e:
+                print(f"警告: 无法读取文件 {nc_path}: {e}")
+        print(f"共索引到 {len(identifiers)} 个时间帧。")
+        return identifiers
+
+    def _create_all_samples(self, data_list):
+        num_frames = len(data_list)
+        if num_frames < self.seq_len:
+            raise ValueError(f"数据总帧数({num_frames})小于序列长度({self.seq_len})")
+        if isinstance(data_list[0], int):
+            indices = data_list
+        else:
+            indices = list(range(num_frames))
+        return [indices[i:i+self.seq_len] for i in range(num_frames - self.seq_len + 1)]
+
+    def _calculate_normalization_params(self, train_samples):
+        min_val, max_val = np.inf, -np.inf
+        unique_indices = sorted(set(idx for sample in train_samples for idx in sample))
+        for idx in unique_indices:
+            nc_path, t_idx = self.all_identifiers[idx]
+            try:
+                with nc.Dataset(nc_path, 'r') as ds:
+                    fg = ds.variables['fgco2']
+                    if self.crop_config:
+                        top, left = self.crop_config['top'], self.crop_config['left']
+                        h, w = self.crop_config['height'], self.crop_config['width']
+                        frame = fg[t_idx, top:top+h, left:left+w]
+                    else:
+                        frame = fg[t_idx, :, :]
+                    valid = ~(np.isnan(frame) | (np.abs(frame) > 1e30))
+                    if valid.any():
+                        vals = frame[valid]
+                        min_val = min(min_val, float(vals.min()))
+                        max_val = max(max_val, float(vals.max()))
+            except Exception as e:
+                print(f"警告: 跳过 {nc_path} (原因: {e})")
+        return min_val, max_val
 
 
 class ocean_soda(object):

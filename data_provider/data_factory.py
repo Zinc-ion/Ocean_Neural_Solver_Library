@@ -1,5 +1,5 @@
 from data_provider.data_loader import airfoil, ns, darcy, pipe, elas, plas, pdebench_autoregressive, \
-    pdebench_steady_darcy, car_design, cfd3d, poc_flux  # 添加 poc_flux
+    pdebench_steady_darcy, car_design, cfd3d, poc_flux, ocean_soda  # 添加 poc_flux 和 ocean_soda
 
 
 def get_data(args):

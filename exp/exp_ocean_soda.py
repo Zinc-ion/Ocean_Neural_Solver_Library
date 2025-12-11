@@ -326,12 +326,12 @@ class Exp_Ocean_SODA(Exp_Basic):
             import matplotlib.pyplot as plt
             
             # 取第一个batch的第一个时间步
-            img_size = self.args.shapelist[0]
+            H, W = self.args.shapelist
             
             # 重塑为图像格式
-            true_img = y_true[0, :, 0].cpu().reshape(img_size, img_size).numpy()
-            pred_img = y_pred[0, :, 0].cpu().reshape(img_size, img_size).numpy()
-            mask_img = mask[0, :, 0].cpu().reshape(img_size, img_size).numpy()
+            true_img = y_true[0, :, 0].cpu().reshape(H, W).numpy()
+            pred_img = y_pred[0, :, 0].cpu().reshape(H, W).numpy()
+            mask_img = mask[0, :, 0].cpu().reshape(H, W).numpy()
             
             # 创建图像
             fig, axes = plt.subplots(1, 4, figsize=(20, 5))
