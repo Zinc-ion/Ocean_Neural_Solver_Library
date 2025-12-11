@@ -1312,7 +1312,11 @@ class OceanSodaDataset(Dataset):
             mask_array = self.cached_masks[start_idx:end_idx].copy()
         else:
             frames, masks = [], []
-            for (nc_path, t_idx) in sample_info:
+            for idx_item in sample_info:
+                if isinstance(idx_item, int):
+                    nc_path, t_idx = self.all_identifiers[idx_item]
+                else:
+                    nc_path, t_idx = idx_item
                 with nc.Dataset(nc_path, 'r') as ncfile:
                     fg = ncfile.variables['fgco2']
                     if self.crop_config:
