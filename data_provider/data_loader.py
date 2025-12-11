@@ -1479,6 +1479,8 @@ class OceanSodaDataset(Dataset):
                         else:
                             # 尝试从变量shape获取
                             time_dim = ncfile.variables['fgco2'].shape[0]
+                        
+                        print(f"  文件: {os.path.basename(nc_path)} -> 包含 {time_dim} 个时间步")
                             
                         for t_idx in range(time_dim):
                             all_time_indices.append((nc_path, t_idx))

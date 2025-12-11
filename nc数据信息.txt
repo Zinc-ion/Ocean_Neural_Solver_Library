@@ -1,0 +1,293 @@
+       File "fgco2-1980s-8D_25km-OceanSODAETHZv2.2024r01.nc"     
+       File type: Hierarchical Data Format, version 5     
+netcdf C:\Users\zincion\Desktop\海洋PINN相关文件集合\fgco2-1980s-8D_25km-OceanSODAETHZv2.2024r01.nc {
+  dimensions:
+    lat = 720;
+    lon = 1440;
+    time = 368;
+  variables:
+    double lat(lat=720);
+      :_FillValue = NaN; // double
+      :long_name = "latitude";
+      :standard_name = "latitude";
+      :units = "degree_N";
+      :axis = "Y";
+
+    double lon(lon=1440);
+      :_FillValue = NaN; // double
+      :long_name = "Longitude";
+      :standard_name = "longitude";
+      :units = "degree_E";
+      :axis = "X";
+
+    long time(time=368);
+      :units = "days since 1982-01-05";
+      :calendar = "proleptic_gregorian";
+
+    float fgco2(time=368, lat=720, lon=1440);
+      :_FillValue = NaNf; // float
+      :units = "mmolC m-2 day-1";
+      :long_name = "Sea-air CO$_2$ flux";
+      :standard_name = "sea_to_air_co2_fluxes";
+      :description = "sea-air CO2 fluxes for the global ocean calculated with kw * sol * dfco2 * (1 - ice). Positive = upward flux. dfco2 is from OceanCarbNN. kw = 0.271 * U^2 * (660 / Sc)^0.5 (U^2 = ERA^2 at native resolution); sol = solubility of CO2 in seawater using ESA-CCI temperature (or NOAA OISSTv2), and stacked salinity. ice fraction is from the SST product. More information about these variables can be found in their respective metadata.";
+      :valid_min = -50L; // long
+      :valid_max = 50L; // long
+      :plot_units = "mmolC m$^{-2}$ day$^{-1}$";
+      :plot_vmin = -10L; // long
+      :plot_vmax = 10L; // long
+      :plot_cmap = "RdBu_r";
+      :_ChunkSizes = 74U, 144U, 288U; // uint
+
+  // global attributes:
+  :contact = "gregorl@ethz.ch";
+  :affiliation = "ETH Zuerich";
+  :product_name = "OceanSODA-ETHZ-HR";
+  :product_version = "v2023.01";
+  :project = "ESA-OceanHealth-OceanAcidification";
+  :product_details = "Fugacity of CO2 (fCO2) and total alkalinity are estimated by machine learning approaches. Specifically, fCO2 is estimated using the OceanCarbNN approach and TA is estimated with the GRaCER approach. These two variables are used (with SST, salinity, +) to derive the remaining parameters of the marine carbonate system.";
+  :pyCO2SYS_version = "v1.8.2";
+  :pyCO2SYS_inputs = "All constants are set do default, except for those listed here. \npar1=alk, \npar2=sfco2,\ntemperature=sst,\nsalinity=sss,\ntotal_posphate=woa18_phosphate,\ntotal_silicate=woa18_silicate,\nopt_k_carbonic=10  # (Lueker et al. 2010),\nopt_pH_scale=1  # (total scale)\n";
+  :geospatial_min_latitude = -89.875; // double
+  :geospatial_max_latitude = 89.875; // double
+  :geospatial_min_longitude = -179.875; // double
+  :geospatial_max_longitude = 179.875; // double
+  :time_coverage_start = "1982-01-01T00:00:00";
+  :time_coverage_end = "1982-01-08T23:59:59";
+}
+      
+
+
+      
+       File "fgco2-1990s-8D_25km-OceanSODAETHZv2.2024r01.nc"     
+       File type: Hierarchical Data Format, version 5     
+netcdf C:\Users\zincion\Desktop\海洋PINN相关文件集合\fgco2-1990s-8D_25km-OceanSODAETHZv2.2024r01.nc {
+  dimensions:
+    lat = 720;
+    lon = 1440;
+    time = 460;
+  variables:
+    double lat(lat=720);
+      :_FillValue = NaN; // double
+      :long_name = "latitude";
+      :standard_name = "latitude";
+      :units = "degree_N";
+      :axis = "Y";
+
+    double lon(lon=1440);
+      :_FillValue = NaN; // double
+      :long_name = "Longitude";
+      :standard_name = "longitude";
+      :units = "degree_E";
+      :axis = "X";
+
+    long time(time=460);
+      :units = "days since 1982-01-05";
+      :calendar = "proleptic_gregorian";
+
+    float fgco2(time=460, lat=720, lon=1440);
+      :_FillValue = NaNf; // float
+      :units = "mmolC m-2 day-1";
+      :long_name = "Sea-air CO$_2$ flux";
+      :standard_name = "sea_to_air_co2_fluxes";
+      :description = "sea-air CO2 fluxes for the global ocean calculated with kw * sol * dfco2 * (1 - ice). Positive = upward flux. dfco2 is from OceanCarbNN. kw = 0.271 * U^2 * (660 / Sc)^0.5 (U^2 = ERA^2 at native resolution); sol = solubility of CO2 in seawater using ESA-CCI temperature (or NOAA OISSTv2), and stacked salinity. ice fraction is from the SST product. More information about these variables can be found in their respective metadata.";
+      :valid_min = -100L; // long
+      :valid_max = 100L; // long
+      :plot_units = "mmolC m$^{-2}$ day$^{-1}$";
+      :plot_vmin = -10L; // long
+      :plot_vmax = 10L; // long
+      :plot_cmap = "RdBu_r";
+      :_ChunkSizes = 92U, 144U, 288U; // uint
+
+  // global attributes:
+  :contact = "gregorl@ethz.ch";
+  :affiliation = "ETH Zuerich";
+  :product_name = "OceanSODA-ETHZ-HR";
+  :product_version = "v2023.01";
+  :project = "ESA-OceanHealth-OceanAcidification";
+  :product_details = "Fugacity of CO2 (fCO2) and total alkalinity are estimated by machine learning approaches. Specifically, fCO2 is estimated using the OceanCarbNN approach and TA is estimated with the GRaCER approach. These two variables are used (with SST, salinity, +) to derive the remaining parameters of the marine carbonate system.";
+  :pyCO2SYS_version = "v1.8.2";
+  :pyCO2SYS_inputs = "All constants are set do default, except for those listed here. \npar1=alk, \npar2=sfco2,\ntemperature=sst,\nsalinity=sss,\ntotal_posphate=woa18_phosphate,\ntotal_silicate=woa18_silicate,\nopt_k_carbonic=10  # (Lueker et al. 2010),\nopt_pH_scale=1  # (total scale)\n";
+  :geospatial_min_latitude = -89.875; // double
+  :geospatial_max_latitude = 89.875; // double
+  :geospatial_min_longitude = -179.875; // double
+  :geospatial_max_longitude = 179.875; // double
+  :time_coverage_start = "1990-01-01T00:00:00";
+  :time_coverage_end = "1990-01-08T23:59:59";
+}
+      
+      
+      
+
+       File "fgco2-2000s-8D_25km-OceanSODAETHZv2.2024r01.nc"     
+       File type: Hierarchical Data Format, version 5     
+netcdf C:\Users\zincion\Desktop\海洋PINN相关文件集合\fgco2-2000s-8D_25km-OceanSODAETHZv2.2024r01.nc {
+  dimensions:
+    lat = 720;
+    lon = 1440;
+    time = 460;
+  variables:
+    double lat(lat=720);
+      :_FillValue = NaN; // double
+      :long_name = "latitude";
+      :standard_name = "latitude";
+      :units = "degree_N";
+      :axis = "Y";
+
+    double lon(lon=1440);
+      :_FillValue = NaN; // double
+      :long_name = "Longitude";
+      :standard_name = "longitude";
+      :units = "degree_E";
+      :axis = "X";
+
+    long time(time=460);
+      :units = "days since 1982-01-05";
+      :calendar = "proleptic_gregorian";
+
+    float fgco2(time=460, lat=720, lon=1440);
+      :_FillValue = NaNf; // float
+      :units = "mmolC m-2 day-1";
+      :long_name = "Sea-air CO$_2$ flux";
+      :standard_name = "sea_to_air_co2_fluxes";
+      :description = "sea-air CO2 fluxes for the global ocean calculated with kw * sol * dfco2 * (1 - ice). Positive = upward flux. dfco2 is from OceanCarbNN. kw = 0.271 * U^2 * (660 / Sc)^0.5 (U^2 = ERA^2 at native resolution); sol = solubility of CO2 in seawater using ESA-CCI temperature (or NOAA OISSTv2), and stacked salinity. ice fraction is from the SST product. More information about these variables can be found in their respective metadata.";
+      :valid_min = -100L; // long
+      :valid_max = 100L; // long
+      :plot_units = "mmolC m$^{-2}$ day$^{-1}$";
+      :plot_vmin = -10L; // long
+      :plot_vmax = 10L; // long
+      :plot_cmap = "RdBu_r";
+      :_ChunkSizes = 92U, 144U, 288U; // uint
+
+  // global attributes:
+  :contact = "gregorl@ethz.ch";
+  :affiliation = "ETH Zuerich";
+  :product_name = "OceanSODA-ETHZ-HR";
+  :product_version = "v2023.01";
+  :project = "ESA-OceanHealth-OceanAcidification";
+  :product_details = "Fugacity of CO2 (fCO2) and total alkalinity are estimated by machine learning approaches. Specifically, fCO2 is estimated using the OceanCarbNN approach and TA is estimated with the GRaCER approach. These two variables are used (with SST, salinity, +) to derive the remaining parameters of the marine carbonate system.";
+  :pyCO2SYS_version = "v1.8.2";
+  :pyCO2SYS_inputs = "All constants are set do default, except for those listed here. \npar1=alk, \npar2=sfco2,\ntemperature=sst,\nsalinity=sss,\ntotal_posphate=woa18_phosphate,\ntotal_silicate=woa18_silicate,\nopt_k_carbonic=10  # (Lueker et al. 2010),\nopt_pH_scale=1  # (total scale)\n";
+  :geospatial_min_latitude = -89.875; // double
+  :geospatial_max_latitude = 89.875; // double
+  :geospatial_min_longitude = -179.875; // double
+  :geospatial_max_longitude = 179.875; // double
+  :time_coverage_start = "2000-01-01T00:00:00";
+  :time_coverage_end = "2000-01-08T23:59:59";
+}
+
+
+
+       File "fgco2-2010s-8D_25km-OceanSODAETHZv2.2024r01.nc"     
+       File type: Hierarchical Data Format, version 5     
+netcdf C:\Users\zincion\Desktop\海洋PINN相关文件集合\fgco2-2010s-8D_25km-OceanSODAETHZv2.2024r01.nc {
+  dimensions:
+    lat = 720;
+    lon = 1440;
+    time = 460;
+  variables:
+    double lat(lat=720);
+      :_FillValue = NaN; // double
+      :long_name = "latitude";
+      :standard_name = "latitude";
+      :units = "degree_N";
+      :axis = "Y";
+
+    double lon(lon=1440);
+      :_FillValue = NaN; // double
+      :long_name = "Longitude";
+      :standard_name = "longitude";
+      :units = "degree_E";
+      :axis = "X";
+
+    long time(time=460);
+      :units = "days since 1982-01-05";
+      :calendar = "proleptic_gregorian";
+
+    float fgco2(time=460, lat=720, lon=1440);
+      :_FillValue = NaNf; // float
+      :units = "mmolC m-2 day-1";
+      :long_name = "Sea-air CO$_2$ flux";
+      :standard_name = "sea_to_air_co2_fluxes";
+      :description = "sea-air CO2 fluxes for the global ocean calculated with kw * sol * dfco2 * (1 - ice). Positive = upward flux. dfco2 is from OceanCarbNN. kw = 0.271 * U^2 * (660 / Sc)^0.5 (U^2 = ERA^2 at native resolution); sol = solubility of CO2 in seawater using ESA-CCI temperature (or NOAA OISSTv2), and stacked salinity. ice fraction is from the SST product. More information about these variables can be found in their respective metadata.";
+      :valid_min = -100L; // long
+      :valid_max = 100L; // long
+      :plot_units = "mmolC m$^{-2}$ day$^{-1}$";
+      :plot_vmin = -10L; // long
+      :plot_vmax = 10L; // long
+      :plot_cmap = "RdBu_r";
+      :_ChunkSizes = 92U, 144U, 288U; // uint
+
+  // global attributes:
+  :contact = "gregorl@ethz.ch";
+  :affiliation = "ETH Zuerich";
+  :product_name = "OceanSODA-ETHZ-HR";
+  :product_version = "v2023.01";
+  :project = "ESA-OceanHealth-OceanAcidification";
+  :product_details = "Fugacity of CO2 (fCO2) and total alkalinity are estimated by machine learning approaches. Specifically, fCO2 is estimated using the OceanCarbNN approach and TA is estimated with the GRaCER approach. These two variables are used (with SST, salinity, +) to derive the remaining parameters of the marine carbonate system.";
+  :pyCO2SYS_version = "v1.8.2";
+  :pyCO2SYS_inputs = "All constants are set do default, except for those listed here. \npar1=alk, \npar2=sfco2,\ntemperature=sst,\nsalinity=sss,\ntotal_posphate=woa18_phosphate,\ntotal_silicate=woa18_silicate,\nopt_k_carbonic=10  # (Lueker et al. 2010),\nopt_pH_scale=1  # (total scale)\n";
+  :geospatial_min_latitude = -89.875; // double
+  :geospatial_max_latitude = 89.875; // double
+  :geospatial_min_longitude = -179.875; // double
+  :geospatial_max_longitude = 179.875; // double
+  :time_coverage_start = "2010-01-01T00:00:00";
+  :time_coverage_end = "2010-01-08T23:59:59";
+}
+
+
+
+
+netcdf C:\Users\zincion\Desktop\海洋PINN相关文件集合\fgco2-2020s-8D_25km-OceanSODAETHZv2.2024r01.nc {
+  dimensions:
+    lat = 720;
+    lon = 1440;
+    time = 130;
+  variables:
+    double lat(lat=720);
+      :_FillValue = NaN; // double
+      :long_name = "latitude";
+      :standard_name = "latitude";
+      :units = "degree_N";
+      :axis = "Y";
+
+    double lon(lon=1440);
+      :_FillValue = NaN; // double
+      :long_name = "Longitude";
+      :standard_name = "longitude";
+      :units = "degree_E";
+      :axis = "X";
+
+    long time(time=130);
+      :units = "days since 1982-01-05";
+      :calendar = "proleptic_gregorian";
+
+    float fgco2(time=130, lat=720, lon=1440);
+      :_FillValue = NaNf; // float
+      :units = "mmolC m-2 day-1";
+      :long_name = "Sea-air CO$_2$ flux";
+      :standard_name = "sea_to_air_co2_fluxes";
+      :description = "sea-air CO2 fluxes for the global ocean calculated with kw * sol * dfco2 * (1 - ice). Positive = upward flux. dfco2 is from OceanCarbNN. kw = 0.271 * U^2 * (660 / Sc)^0.5 (U^2 = ERA^2 at native resolution); sol = solubility of CO2 in seawater using ESA-CCI temperature (or NOAA OISSTv2), and stacked salinity. ice fraction is from the SST product. More information about these variables can be found in their respective metadata.";
+      :valid_min = -100L; // long
+      :valid_max = 100L; // long
+      :plot_units = "mmolC m$^{-2}$ day$^{-1}$";
+      :plot_vmin = -10L; // long
+      :plot_vmax = 10L; // long
+      :plot_cmap = "RdBu_r";
+      :_ChunkSizes = 33U, 180U, 360U; // uint
+
+  // global attributes:
+  :contact = "gregorl@ethz.ch";
+  :affiliation = "ETH Zuerich";
+  :product_name = "OceanSODA-ETHZ-HR";
+  :product_version = "v2023.01";
+  :project = "ESA-OceanHealth-OceanAcidification";
+  :product_details = "Fugacity of CO2 (fCO2) and total alkalinity are estimated by machine learning approaches. Specifically, fCO2 is estimated using the OceanCarbNN approach and TA is estimated with the GRaCER approach. These two variables are used (with SST, salinity, +) to derive the remaining parameters of the marine carbonate system.";
+  :pyCO2SYS_version = "v1.8.2";
+  :pyCO2SYS_inputs = "All constants are set do default, except for those listed here. \npar1=alk, \npar2=sfco2,\ntemperature=sst,\nsalinity=sss,\ntotal_posphate=woa18_phosphate,\ntotal_silicate=woa18_silicate,\nopt_k_carbonic=10  # (Lueker et al. 2010),\nopt_pH_scale=1  # (total scale)\n";
+  :geospatial_min_latitude = -89.875; // double
+  :geospatial_max_latitude = 89.875; // double
+  :geospatial_min_longitude = -179.875; // double
+  :geospatial_max_longitude = 179.875; // double
+  :time_coverage_start = "2020-01-01T00:00:00";
+  :time_coverage_end = "2020-01-08T23:59:59";
+}

@@ -104,6 +104,9 @@ def main():
     elif args.task == 'poc_flux':
         from exp.exp_poc_flux import Exp_POC_Flux
         exp = Exp_POC_Flux(args)
+    elif args.task == 'ocean_soda':
+        from exp.exp_ocean_soda import Exp_Ocean_SODA
+        exp = Exp_Ocean_SODA(args)
     else:
         raise NotImplementedError
 
