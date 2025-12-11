@@ -1388,7 +1388,7 @@ class OceanSodaDataset(Dataset):
             indices = data_list
         else:
             indices = list(range(num_frames))
-        return [indices[i:i+self.seq_len] for i in range(num_frames - self.seq_len + 1)]
+        return [indices[i:i+self.seq_len] for i in range(num_frames - self.seq_len + 1)]  # 滑动窗口步长固定为1
 
     def _calculate_normalization_params(self, train_samples):
         min_val, max_val = np.inf, -np.inf
