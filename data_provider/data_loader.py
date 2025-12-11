@@ -1170,6 +1170,7 @@ class OceanSodaDataset(Dataset):
     用于海洋碳通量数据的PyTorch数据集类
     输出格式兼容现有框架: (pos, input_data, output_data)
     内部保存mask用于评估时过滤缺失值
+    支持包含多个时间步的NetCDF文件
     """
     def __init__(self, mode, data_path, seq_len, img_size, 
                  T_in=1, T_out=1,
@@ -1204,7 +1205,7 @@ class OceanSodaDataset(Dataset):
         self.need_name = need_name
         self.crop_config = crop_config
 
-        # 加载数据标识
+        # 加载数据标识 (文件路径, 时间索引)
         all_data_identifiers = self._load_keys()
         if not all_data_identifiers:
             raise FileNotFoundError(f"在路径 {self.data_path} 下没有找到任何 NetCDF 数据")
@@ -1273,16 +1274,16 @@ class OceanSodaDataset(Dataset):
             height = self.crop_config['height']
             width = self.crop_config['width']
         
-        for nc_path, yyyymm_key in sample_identifiers:
+        for nc_path, time_idx in sample_identifiers:
             try:
                 with nc.Dataset(nc_path, 'r') as ncfile:
                     fgco2_var = ncfile.variables['fgco2']
                     
                     # 读取数据(带裁剪)
                     if self.crop_config:
-                        frame_data = fgco2_var[0, top:top+height, left:left+width]
+                        frame_data = fgco2_var[time_idx, top:top+height, left:left+width]
                     else:
-                        frame_data = fgco2_var[0, :, :]
+                        frame_data = fgco2_var[time_idx, :, :]
 
                     frame_data = frame_data.astype(np.float32)
                     
@@ -1296,11 +1297,11 @@ class OceanSodaDataset(Dataset):
                     masks.append(valid_mask)
             
             except Exception as e:
-                print(f"读取文件 {nc_path} 时出错: {e}")
+                print(f"读取文件 {nc_path} (time_idx={time_idx}) 时出错: {e}")
                 if self.crop_config:
                     error_shape = (self.crop_config['height'], self.crop_config['width'])
                 else:
-                    error_shape = (713, 1440)
+                    error_shape = (713, 1440) # 默认fallback, 实际应该动态获取
                     if len(frames) > 0:
                         error_shape = frames[0].shape
                 frames.append(np.zeros(error_shape, dtype=np.float32))
@@ -1372,30 +1373,37 @@ class OceanSodaDataset(Dataset):
         return pos, fx, y, mask
 
     def _load_keys(self):
-        """扫描并加载所有NetCDF文件路径和月份标识"""
+        """扫描并加载所有NetCDF文件路径和时间索引"""
         search_pattern = os.path.join(self.data_path, "**", "*.nc")
         nc_files = sorted(glob.glob(search_pattern, recursive=True))
         
-        monthly_identifiers = []
+        all_time_indices = []
         print(f"发现 {len(nc_files)} 个NetCDF文件，正在扫描...")
         
         for nc_path in tqdm(nc_files, desc="扫描NetCDF文件"):
             try:
-                filename = os.path.basename(nc_path)
-                yyyymm = filename.split('_')[-1].replace('.nc', '')
-                
                 with nc.Dataset(nc_path, 'r') as ncfile:
                     if 'fgco2' in ncfile.variables:
-                        monthly_identifiers.append((nc_path, yyyymm))
+                        # 获取时间维度长度
+                        # 根据用户描述, shape是 (time, lat, lon)
+                        # 注意: 有些nc文件time维度可能叫'time'或't'
+                        if 'time' in ncfile.dimensions:
+                            time_dim = len(ncfile.dimensions['time'])
+                        else:
+                            # 尝试从变量shape获取
+                            time_dim = ncfile.variables['fgco2'].shape[0]
+                            
+                        for t_idx in range(time_dim):
+                            all_time_indices.append((nc_path, t_idx))
                     else:
                         print(f"警告: 文件 {nc_path} 中没有 'fgco2' 变量")
                         
             except Exception as e:
                 print(f"警告: 无法读取文件 {nc_path}: {e}")
 
-        monthly_identifiers.sort(key=lambda x: x[1])
-        print(f"共找到 {len(monthly_identifiers)} 个有效月度数据。")
-        return monthly_identifiers
+        # 不需要按yyyymm排序了，因为nc_files已经是sorted的，且我们按顺序读取
+        print(f"共找到 {len(all_time_indices)} 个有效时间步。")
+        return all_time_indices
 
     def _create_all_samples(self, data_list):
         """根据序列长度创建滑动窗口样本"""
@@ -1412,7 +1420,12 @@ class OceanSodaDataset(Dataset):
         print("正在基于训练集计算归一化参数(忽略NaN和填充值)...")
         min_val, max_val = np.inf, -np.inf
         
-        unique_train_data = sorted(list(set(item for sample in train_samples for item in sample)))
+        # 优化: 按文件分组，避免重复打开文件
+        from collections import defaultdict
+        file_to_indices = defaultdict(set)
+        for sample in train_samples:
+            for nc_path, t_idx in sample:
+                file_to_indices[nc_path].add(t_idx)
         
         if self.crop_config:
             top = self.crop_config['top']
@@ -1421,22 +1434,26 @@ class OceanSodaDataset(Dataset):
             width = self.crop_config['width']
             print(f"将在裁剪区域 [T:{top}, L:{left}, H:{height}, W:{width}] 内计算")
         
-        for nc_path, yyyymm_key in tqdm(unique_train_data, desc="计算归一化参数"):
+        for nc_path in tqdm(sorted(file_to_indices.keys()), desc="计算归一化参数"):
             try:
+                indices = sorted(list(file_to_indices[nc_path]))
                 with nc.Dataset(nc_path, 'r') as ncfile:
                     fgco2_var = ncfile.variables['fgco2']
                     
-                    if self.crop_config:
-                        frame_data = fgco2_var[0, top:top+height, left:left+width]
-                    else:
-                        frame_data = fgco2_var[0, :, :]
-                    
-                    valid_mask = ~(np.isnan(frame_data) | (np.abs(frame_data) > 1e30))
-                    
-                    if valid_mask.any():
-                        valid_data = frame_data[valid_mask]
-                        min_val = min(min_val, valid_data.min())
-                        max_val = max(max_val, valid_data.max())
+                    # 逐个读取需要的帧 (为了节省内存，虽然IO次数多一点，但比起每次sample都打开要好)
+                    # 如果内存允许，可以一次性读取整个文件，但文件可能很大
+                    for t_idx in indices:
+                        if self.crop_config:
+                            frame_data = fgco2_var[t_idx, top:top+height, left:left+width]
+                        else:
+                            frame_data = fgco2_var[t_idx, :, :]
+                        
+                        valid_mask = ~(np.isnan(frame_data) | (np.abs(frame_data) > 1e30))
+                        
+                        if valid_mask.any():
+                            valid_data = frame_data[valid_mask]
+                            min_val = min(min_val, valid_data.min())
+                            max_val = max(max_val, valid_data.max())
                         
             except Exception as e:
                 print(f"警告: 跳过 {nc_path} (原因: {e})")

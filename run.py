@@ -25,7 +25,7 @@ parser.add_argument('--gamma', type=float, default=0.5, help='decay parameter fo
 
 ## data
 parser.add_argument('--data_path', type=str, default='/data/fcj/cdsd/data/SCO2', help='data folder')
-parser.add_argument('--loader', type=str, default='poc_flux', help='type of data loader')
+parser.add_argument('--loader', type=str, default='ocean_soda', help='type of data loader')
 parser.add_argument('--train_ratio', type=float, default=0.8, help='training data ratio')
 parser.add_argument('--valid_ratio', type=float, default=0.1, help='validation data ratio')
 parser.add_argument('--ntrain', type=int, default=1000, help='training data numbers')
@@ -53,8 +53,8 @@ parser.add_argument('--crop_height', type=int, default=None, help='crop height f
 parser.add_argument('--crop_width', type=int, default=None, help='crop width for POC flux')
 
 ## task
-parser.add_argument('--task', type=str, default='poc_flux',
-                    help='select from [steady, steady_design, dynamic_autoregressive, dynamic_conditional, poc_flux]')
+parser.add_argument('--task', type=str, default='ocean_soda',
+                    help='select from [steady, steady_design, dynamic_autoregressive, dynamic_conditional, poc_flux, ocean_soda]')
 parser.add_argument('--T_in', type=int, default=3, help='for input sequence')
 parser.add_argument('--T_out', type=int, default=3, help='for output sequence')
 
