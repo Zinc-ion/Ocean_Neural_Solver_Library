@@ -1176,7 +1176,8 @@ class OceanSodaDataset(Dataset):
                  precomputed_norm_params=None,
                  crop_config=None,
                  cache_data=True,
-                 target_shape=None): # 新增 target_shape 参数
+                 target_shape=None,
+                 shared_cache=None): # 新增 target_shape 参数
         super().__init__()
         self.mode = mode
         self.data_path = data_path
@@ -1190,7 +1191,11 @@ class OceanSodaDataset(Dataset):
         self.cache_data = cache_data
 
         # 加载数据标识
-        self.all_identifiers = self._load_keys()
+        if shared_cache is not None:
+            self.all_identifiers = shared_cache['identifiers']
+        else:
+            self.all_identifiers = self._load_keys()
+            
         if not self.all_identifiers:
             raise FileNotFoundError(f"在路径 {self.data_path} 下没有找到任何 NetCDF 数据")
 
@@ -1208,8 +1213,15 @@ class OceanSodaDataset(Dataset):
         # 缓存逻辑 (保持不变)
         self.cached_data = None
         self.cached_masks = None
-        if self.cache_data:
+        
+        if shared_cache is not None and self.cache_data:
+            # print("使用共享缓存数据...")
+            self.cached_data = shared_cache['data']
+            self.cached_masks = shared_cache['masks']
+        elif self.cache_data:
             self._load_cache()
+            
+        if self.cache_data:
             source_data = list(range(len(self.all_identifiers)))
         else:
             source_data = self.all_identifiers
@@ -1495,6 +1507,16 @@ class ocean_soda(object):
             'min_val': train_dataset_temp.min_val,
             'max_val': train_dataset_temp.max_val
         }
+        
+        # 保存缓存数据供后续使用
+        self.shared_cache = None
+        if train_dataset_temp.cached_data is not None:
+            self.shared_cache = {
+                'identifiers': train_dataset_temp.all_identifiers,
+                'data': train_dataset_temp.cached_data,
+                'masks': train_dataset_temp.cached_masks
+            }
+            
         self.y_normalizer = None
         
         # 保存 shape 信息供 get_loader 返回
@@ -1510,7 +1532,8 @@ class ocean_soda(object):
             'precomputed_norm_params': self.norm_params,
             'crop_config': self.crop_config,
             'cache_data': True,
-            'target_shape': self.target_shape # 关键
+            'target_shape': self.target_shape, # 关键
+            'shared_cache': self.shared_cache
         }
 
         train_dataset = OceanSodaDataset(mode='train', **common_args)
