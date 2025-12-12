@@ -148,6 +148,7 @@ class Exp_Ocean_Soda_Autoregressive(Exp_Basic):
                     total_loss = 0
                     
                     preds = []
+                    step_losses_batch = []
                     
                     # Autoregressive loop
                     for t in range(self.args.T_out):
@@ -164,6 +165,7 @@ class Exp_Ocean_Soda_Autoregressive(Exp_Basic):
                         
                         # Calculate loss for this step
                         loss_t, valid_pts, total_pts = self.masked_mse(im, target_t, mask_t)
+                        step_losses_batch.append(loss_t.item())
                         train_step_accum[t] += loss_t.item()
                         total_loss += loss_t
                         
@@ -200,10 +202,20 @@ class Exp_Ocean_Soda_Autoregressive(Exp_Basic):
                     num_batches += 1
                     
                     train_pbar.set_postfix(loss="{:.5f}".format(total_loss.item()))
+                    
+                    # Log to SwanLab per batch
+                    batch_log = {
+                        "train_loss_step": total_loss.item() / self.args.T_out,
+                        "train_loss_full": full_loss.item(),
+                    }
+                    for t, l_val in enumerate(step_losses_batch):
+                        batch_log[f"train_loss_step_{t+1}"] = l_val
+                    swanlab.log(batch_log)
 
             if self.args.scheduler == 'CosineAnnealingLR' or self.args.scheduler == 'StepLR':
                 scheduler.step()
 
+            # 当前epoch的平均MSE，即平均每个batch的平均MSE
             avg_train_loss_step = train_mse_accum / num_batches if num_batches > 0 else 0.0
             avg_train_loss_full = train_full_accum / num_batches if num_batches > 0 else 0.0
             print("Epoch {} Train loss step MSE : {:.5f} Train loss full MSE: {:.5f} Valid Points Ratio: {:.2f}%".format(
@@ -214,18 +226,12 @@ class Exp_Ocean_Soda_Autoregressive(Exp_Basic):
             valid_loss = self.vali()
             print("Epoch {} Valid MSE: {:.5f}".format(ep, valid_loss))
 
-            # 记录每个时间步的MSE到swanlab
-            log_dict = {
-                "train_loss_step": avg_train_loss_step,
-                "train_loss_full": avg_train_loss_full,
+            # 记录Validation结果到swanlab
+            swanlab.log({
                 "valid_points_ratio": 100 * train_valid_points / train_total_points if train_total_points > 0 else 0.0,
                 "valid_mse": valid_loss,
                 "epoch": ep
-            }
-            for t in range(self.args.T_out):
-                log_dict[f"train_loss_step_{t+1}"] = train_step_accum[t] / num_batches if num_batches > 0 else 0.0
-
-            swanlab.log(log_dict)
+            })
 
             if ep % 100 == 0:
                 if not os.path.exists('./checkpoints'):
