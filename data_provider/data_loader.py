@@ -1232,6 +1232,7 @@ class OceanSodaDataset(Dataset):
         if precomputed_norm_params:
             self.min_val = precomputed_norm_params['min_val']
             self.max_val = precomputed_norm_params['max_val']
+            print(f"使用预计算归一化参数: min={self.min_val}, max={self.max_val}")
         else:
             if self.cache_data and len(self.samples) > 0:
                 start_idx = self.samples[0][0]
@@ -1241,14 +1242,18 @@ class OceanSodaDataset(Dataset):
                 valid_data = train_data_slice[train_mask_slice]
                 self.min_val = valid_data.min()
                 self.max_val = valid_data.max()
+                print(f"计算归一化参数(缓存数据): min={self.min_val}, max={self.max_val}")
             else:
                 train_samples_for_norm = all_samples[:train_end]
                 self.min_val, self.max_val = self._calculate_normalization_params(train_samples_for_norm)
+                print(f"计算归一化参数(非缓存数据): min={self.min_val}, max={self.max_val}")
         
         self._create_position_grid()
 
     def _get_original_shape(self):
-        """读取第一个文件获取原始尺寸"""
+        """读取第一个文件获取原始尺寸
+        如果 crop_config 存在，返回 crop 后的尺寸；否则返回原始尺寸。
+        """
         first_path = self.all_identifiers[0][0]
         with nc.Dataset(first_path, 'r') as ncfile:
             if self.crop_config:
@@ -1257,7 +1262,13 @@ class OceanSodaDataset(Dataset):
             return shape[-2], shape[-1] # lat, lon
 
     def _load_cache(self):
-        """修改: 使用 self.original_h 和 self.original_w"""
+        """修改: 使用 self.original_h 和 self.original_w
+        加载所有 NetCDF 文件的 fgco2 数据到内存中。
+        每个文件的所有时间步都被加载，形状为 (T, H, W)，
+        其中 T 是时间步长，H=original_h, W=original_w。
+        数据被存储在 self.cached_data 中，形状为 (total_frames, H, W)。
+        同时，生成对应的 mask，存储在 self.cached_masks 中，形状为 (total_frames, H, W)。
+        """
         print("正在将所有数据加载到内存中 (cache_data=True)...")
         from collections import defaultdict
         file_to_indices = defaultdict(list)
@@ -1296,13 +1307,23 @@ class OceanSodaDataset(Dataset):
                 print(f"Err: {e}")
 
     def _create_position_grid(self):
-        """修改: 支持长方形网格"""
+        """修改: 支持长方形网格
+        生成位置网格 (pos_grid)，用于模型输入。
+        网格坐标范围 [0, 1]，形状为 (H, W, 2)，其中 H=h, W=w。
+        网格的第一个通道为经度 (lon)，第二个通道为纬度 (lat)。
+        """
         x = torch.linspace(0, 1, self.w) # lon
         y = torch.linspace(0, 1, self.h) # lat
         grid_y, grid_x = torch.meshgrid(y, x, indexing='ij')
         self.pos_grid = torch.stack([grid_x, grid_y], dim=-1) # (H, W, 2)
 
     def __getitem__(self, idx):
+        '''
+        获取样本 idx 对应的 fgco2 数据和 mask。
+        如果 self.cache_data 为 True，则从缓存中读取；否则从文件中读取。
+        对数据进行归一化处理，范围 [-1, 1]。
+        返回 (data_tensor, mask_tensor)，形状为 (T, 1, H, W) 和 (T, 1, H, W)。
+        '''
         sample_info = self.samples[idx]
         
         if self.cache_data:
@@ -1363,6 +1384,13 @@ class OceanSodaDataset(Dataset):
         return len(self.samples)
 
     def _load_keys(self):
+        '''
+        加载所有NetCDF文件的时间帧索引。
+        遍历 self.data_path 下的所有子目录，查找所有 *.nc 文件。
+        对每个文件，检查是否包含 fgco2 变量。
+        如果包含，记录文件路径和每个时间步的索引 (t_idx)。
+        返回一个列表，每个元素为 (nc_path, t_idx) 元组。
+        '''
         search_pattern = os.path.join(self.data_path, "**", "*.nc")
         nc_files = sorted(glob.glob(search_pattern, recursive=True))
         identifiers = []
@@ -1381,6 +1409,11 @@ class OceanSodaDataset(Dataset):
         return identifiers
 
     def _create_all_samples(self, data_list):
+        '''
+        创建所有可能的序列样本，每个样本长度为 seq_len。
+        如果数据总帧数小于 seq_len，则抛出 ValueError。
+        如果 data_list 中的元素是整数，则直接使用作为索引；否则使用 range(len(data_list))。
+        '''
         num_frames = len(data_list)
         if num_frames < self.seq_len:
             raise ValueError(f"数据总帧数({num_frames})小于序列长度({self.seq_len})")
@@ -1391,6 +1424,11 @@ class OceanSodaDataset(Dataset):
         return [indices[i:i+self.seq_len] for i in range(num_frames - self.seq_len + 1)]  # 滑动窗口步长固定为1
 
     def _calculate_normalization_params(self, train_samples):
+        '''
+        计算训练样本的归一化参数 (min_val, max_val)。
+        遍历所有样本中的唯一索引，读取对应的 fgco2 数据，计算有效范围。
+        如果数据中包含 NaN 或异常值，会被忽略。
+        '''
         min_val, max_val = np.inf, -np.inf
         unique_indices = sorted(set(idx for sample in train_samples for idx in sample))
         for idx in unique_indices:
