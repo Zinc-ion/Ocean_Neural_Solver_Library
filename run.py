@@ -33,12 +33,12 @@ parser.add_argument('--ntest', type=int, default=200, help='test data numbers')
 parser.add_argument('--normalize', type=bool, default=False, help='make normalization to output')
 parser.add_argument('--norm_type', type=str, default='UnitTransformer',
                     help='dataset normalize type. select from [UnitTransformer, UnitGaussianNormalizer]')
-parser.add_argument('--geotype', type=str, default='unstructured',
+parser.add_argument('--geotype', type=str, default='structured_2D',
                     help='select from [unstructured, structured_1D, structured_2D, structured_3D]')
 parser.add_argument('--time_input', type=bool, default=False, help='for conditional dynamic task')
 parser.add_argument('--space_dim', type=int, default=2, help='position information dimension')
-parser.add_argument('--fun_dim', type=int, default=0, help='input observation dimension')
-parser.add_argument('--out_dim', type=int, default=1, help='output observation dimension')
+parser.add_argument('--fun_dim', type=int, default=3, help='input observation dimension 必须等于 T_in (如果只有fgco2)')
+parser.add_argument('--out_dim', type=int, default=1, help='output observation dimension 每次预测的时间步数或变量数，通常为1')
 parser.add_argument('--shapelist', type=list, default=None, help='for structured geometry')
 parser.add_argument('--downsamplex', type=int, default=1, help='downsample rate in x-axis')
 parser.add_argument('--downsampley', type=int, default=1, help='downsample rate in y-axis')
@@ -105,8 +105,8 @@ def main():
         from exp.exp_poc_flux import Exp_POC_Flux
         exp = Exp_POC_Flux(args)
     elif args.task == 'ocean_soda':
-        from exp.exp_ocean_soda import Exp_Ocean_SODA
-        exp = Exp_Ocean_SODA(args)
+        from exp.exp_ocean_soda_autoregressive import Exp_Ocean_Soda_Autoregressive
+        exp = Exp_Ocean_Soda_Autoregressive(args)
     else:
         raise NotImplementedError
 

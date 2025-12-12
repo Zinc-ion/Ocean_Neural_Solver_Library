@@ -7,6 +7,12 @@ from utils.loss import L2Loss
 class Exp_Ocean_Soda_Autoregressive(Exp_Basic):
     def __init__(self, args):
         super(Exp_Ocean_Soda_Autoregressive, self).__init__(args)
+        # --- 新增：多卡并行封装 ---
+        # 如果 args.gpu 包含多个ID (例如 "0,1,2,3") 且 CUDA 设备数 > 1
+        if ',' in args.gpu and torch.cuda.device_count() > 1:
+            print(f"检测到多卡配置 ({torch.cuda.device_count()} GPUs), 启用 DataParallel并行训练...")
+            self.model = torch.nn.DataParallel(self.model)
+        # ------------------------
 
     def masked_mse(self, pred, target, mask):
         """
