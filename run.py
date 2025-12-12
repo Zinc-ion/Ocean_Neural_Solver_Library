@@ -1,5 +1,6 @@
 import os
 import argparse
+import swanlab
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import *
@@ -89,6 +90,12 @@ os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
 
 def main():
+    swanlab.init(
+        project="Neural-Solver-Library",
+        experiment_name=args.save_name,
+        config=vars(args)
+    )
+
     if args.task == 'steady':
         from exp.exp_steady import Exp_Steady
         exp = Exp_Steady(args)

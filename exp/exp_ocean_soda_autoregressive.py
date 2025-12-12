@@ -1,6 +1,7 @@
 import os
 import torch
 import numpy as np
+import swanlab
 from exp.exp_basic import Exp_Basic
 from utils.loss import L2Loss
 
@@ -94,54 +95,9 @@ class Exp_Ocean_Soda_Autoregressive(Exp_Basic):
                 # preds: list of T_out tensors, each (N, out_dim)
                 # target y: (N, T_out * out_dim) or (N, T_out) if out_dim=1
                 
-                # 计算每个时间步的误差
-                batch_mse = 0
-                batch_mae = 0
-                batch_valid = 0
-                batch_total = 0
-                
-                for t in range(self.args.T_out):
-                    pred_t = preds[t] # (N, out_dim)
-                    target_t = y[..., t*self.args.out_dim : (t+1)*self.args.out_dim] # (N, out_dim)
-                    mask_t = mask[..., t*self.args.out_dim : (t+1)*self.args.out_dim] # (N, out_dim)
-                    
-                    mse, valid_pts, total_pts = self.masked_mse(pred_t, target_t, mask_t)
-                    mae, _, _ = self.masked_mae(pred_t, target_t, mask_t)
-                    
-                    batch_mse += mse.item() * valid_pts # 累积平方误差和
-                    batch_mae += mae.item() * valid_pts # 累积绝对误差和
-                    batch_valid += valid_pts
-                    batch_total += total_pts
-                
-                # 当前batch的平均误差
-                if batch_valid > 0:
-                    total_mse += batch_mse / batch_valid # 这里累加的是平均值，不太对，应该累加总误差
-                    total_mae += batch_mae / batch_valid
-                    # 修正：上面masked_mse返回的是平均MSE，所以 mse * valid_pts 是总SE
-                    # 我们希望 total_mse 是所有batch的平均MSE
-                    # 但由于不同batch的有效点数不同，简单的平均可能不准确
-                    # 这里为了保持简单，我们累积 total_valid_points，并重新计算
-                    # 所以应该累积 total_squared_error 和 total_abs_error
-                
-                # 重新计算逻辑：
-                # masked_mse 返回的是 mean mse
-                # total_se += mse * valid_pts
-                
-                # 实际上 Exp_POC_Flux 是累加 mse.item() 然后除以 num_batches
-                # 这种方式假设每个batch权重相同。
-                # 如果我们要精确的全局平均，应该累加 sum_error 和 sum_valid_points
-                
-                # 按照 Exp_POC_Flux 的逻辑 (累加平均值):
-                # total_mse += mse.item()
-                # 但这里是多步预测，所以我们对T_out步取平均?
-                
-                # 让我们统一一下：计算整个序列的平均MSE
-                all_preds = torch.cat(preds, dim=-1) # (N, T_out * out_dim)
-                
-                # 计算整体的masked mse
+                all_preds = torch.cat(preds, dim=-1)
                 mse, valid_pts, total_pts = self.masked_mse(all_preds, y, mask)
                 mae, _, _ = self.masked_mae(all_preds, y, mask)
-                
                 total_mse += mse.item()
                 total_mae += mae.item()
                 total_valid_points += valid_pts
@@ -176,6 +132,7 @@ class Exp_Ocean_Soda_Autoregressive(Exp_Basic):
         for ep in range(self.args.epochs):
             self.model.train()
             train_mse_accum = 0
+            train_full_accum = 0
             num_batches = 0
             train_valid_points = 0
             train_total_points = 0
@@ -217,9 +174,15 @@ class Exp_Ocean_Soda_Autoregressive(Exp_Basic):
                         # Free running: use prediction
                         curr_fx = torch.cat((curr_fx[..., self.args.out_dim:], im), dim=-1)
                 
-                # Backprop
+                # 拼接所有时间步的预测，计算完整序列的MSE full-loss
+                all_preds = torch.cat(preds, dim=-1)
+                full_loss, _, _ = self.masked_mse(all_preds, y, mask)
+                train_full_accum += full_loss.item()
+
+                # Backprop 这里只使用单步误差的累计来更新权重，full-loss的整个序列误差只用做展示
                 total_loss.backward()
                 
+                # 检查是否进行梯度裁剪
                 if self.args.max_grad_norm is not None:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
                 optimizer.step()
@@ -235,14 +198,23 @@ class Exp_Ocean_Soda_Autoregressive(Exp_Basic):
             if self.args.scheduler == 'CosineAnnealingLR' or self.args.scheduler == 'StepLR':
                 scheduler.step()
 
-            avg_train_loss = train_mse_accum / num_batches if num_batches > 0 else 0.0
-            print("Epoch {} Train MSE: {:.5f} Valid Points Ratio: {:.2f}%".format(
-                ep, avg_train_loss, 
+            avg_train_loss_step = train_mse_accum / num_batches if num_batches > 0 else 0.0
+            avg_train_loss_full = train_full_accum / num_batches if num_batches > 0 else 0.0
+            print("Epoch {} Train loss step MSE : {:.5f} Train loss full MSE: {:.5f} Valid Points Ratio: {:.2f}%".format(
+                ep, avg_train_loss_step, avg_train_loss_full,
                 100 * train_valid_points / train_total_points if train_total_points > 0 else 0.0
             ))
 
-            test_loss = self.vali()
-            print("Epoch {} Test MSE: {:.5f}".format(ep, test_loss))
+            valid_loss = self.vali()
+            print("Epoch {} Valid MSE: {:.5f}".format(ep, valid_loss))
+
+            swanlab.log({
+                "train_loss_step": avg_train_loss_step,
+                "train_loss_full": avg_train_loss_full,
+                "valid_points_ratio": 100 * train_valid_points / train_total_points if train_total_points > 0 else 0.0,
+                "valid_mse": valid_loss,
+                "epoch": ep
+            })
 
             if ep % 100 == 0:
                 if not os.path.exists('./checkpoints'):
