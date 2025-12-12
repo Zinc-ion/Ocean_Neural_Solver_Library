@@ -25,10 +25,10 @@ parser.add_argument('--step_size', type=int, default=100, help='step size for St
 parser.add_argument('--gamma', type=float, default=0.5, help='decay parameter for StepLR scheduler')
 
 ## data
-parser.add_argument('--data_path', type=str, default='/data/fcj/cdsd/data/SCO2', help='data folder')
+parser.add_argument('--data_path', type=str, default='/Data1/carbon_data/OceanSODA-ETHZ-v2/fgco2', help='data folder')
 parser.add_argument('--loader', type=str, default='ocean_soda', help='type of data loader')
-parser.add_argument('--train_ratio', type=float, default=0.8, help='training data ratio')
-parser.add_argument('--valid_ratio', type=float, default=0.1, help='validation data ratio')
+parser.add_argument('--train_ratio', type=float, default=0.7, help='training data ratio')
+parser.add_argument('--valid_ratio', type=float, default=0.2, help='validation data ratio')
 parser.add_argument('--ntrain', type=int, default=1000, help='training data numbers')
 parser.add_argument('--ntest', type=int, default=200, help='test data numbers')
 parser.add_argument('--normalize', type=bool, default=False, help='make normalization to output')
