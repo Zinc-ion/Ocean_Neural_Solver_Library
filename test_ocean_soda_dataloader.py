@@ -80,7 +80,7 @@ def run_test(data_path, T_in=3, T_out=3, batch_size=1, train_ratio=0.8, valid_ra
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_path", type=str, default=r"C:\Users\zincion\Desktop\海洋PINN相关文件集合")
+    parser.add_argument("--data_path", type=str, default=r"/Data1/carbon_data/OceanSODA-ETHZ-v2/fgco2")
     parser.add_argument("--T_in", type=int, default=3)
     parser.add_argument("--T_out", type=int, default=3)
     parser.add_argument("--batch_size", type=int, default=1)
