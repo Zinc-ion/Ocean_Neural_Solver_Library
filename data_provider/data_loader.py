@@ -1172,12 +1172,12 @@ class OceanSodaDataset(Dataset):
     def __init__(self, mode, data_path, seq_len, 
                  T_in=1, T_out=1,
                  need_name=False, 
-                 train_ratio=0.8, valid_ratio=0.1, 
+                 train_ratio=0.7, valid_ratio=0.2, 
                  precomputed_norm_params=None,
                  crop_config=None,
                  cache_data=True,
                  target_shape=None,
-                 shared_cache=None): # 新增 target_shape 参数
+                 shared_cache=None): # 新增 target_shape 参数，shared_cache 用于共享缓存，默认none，第一次读取后会自动填入shared_cache，后续直接从此处读取数据
         super().__init__()
         self.mode = mode
         self.data_path = data_path
@@ -1225,7 +1225,8 @@ class OceanSodaDataset(Dataset):
             source_data = list(range(len(self.all_identifiers)))
         else:
             source_data = self.all_identifiers
-            
+
+        # _create_all_samples创建所有样本索引，每个样本包含T_in+T_out个时间步，用于getitem时找到样本的定位
         all_samples = self._create_all_samples(source_data)
 
         # 数据集划分 (保持不变)
@@ -1238,7 +1239,7 @@ class OceanSodaDataset(Dataset):
         elif self.mode == 'valid':
             self.samples = all_samples[train_end:valid_end]
         else:
-            self.samples = all_samples[valid_end:]
+            self.samples = all_samples[valid_end:]  # 测试集从验证集结束开始
 
         # 归一化参数 (保持不变)
         if precomputed_norm_params:
@@ -1284,6 +1285,8 @@ class OceanSodaDataset(Dataset):
         print("正在将所有数据加载到内存中 (cache_data=True)...")
         from collections import defaultdict
         file_to_indices = defaultdict(list)
+
+        # 将多个文件的索引拼接成一个大的索引列表 global_idx，文件内索引 t_idx
         for global_idx, (nc_path, t_idx) in enumerate(self.all_identifiers):
             file_to_indices[nc_path].append((t_idx, global_idx))
             
@@ -1300,19 +1303,24 @@ class OceanSodaDataset(Dataset):
                 indices_map = file_to_indices[nc_path]
                 with nc.Dataset(nc_path, 'r') as ncfile:
                     fgco2_var = ncfile.variables['fgco2']
+                    # 读取数据
                     if self.crop_config:
-                        # 假设 crop_config 存在
+                        # 假设 crop_config 存在 即需要裁剪数据
                         top, left = self.crop_config['top'], self.crop_config['left']
                         h, w = self.crop_config['height'], self.crop_config['width']
                         full_data = fgco2_var[:, top:top+h, left:left+w]
                     else:
+                        # 假设 crop_config 不存在 即不需要裁剪数据
                         full_data = fgco2_var[:] 
                         
                     for t_idx, global_idx in indices_map:
                         if t_idx < full_data.shape[0]:
                             frame_data = full_data[t_idx]
+                            # 创建掩码 在填充无效值之前
                             valid_mask = ~(np.isnan(frame_data) | (np.abs(frame_data) > 1e30))
+                            # 对无效值进行填充 0.0
                             frame_data = np.where(valid_mask, frame_data, 0.0)
+                            # 缓存数据，通过 global_idx 索引到正确的位置
                             self.cached_data[global_idx] = frame_data
                             self.cached_masks[global_idx] = valid_mask
             except Exception as e:
@@ -1336,14 +1344,17 @@ class OceanSodaDataset(Dataset):
         对数据进行归一化处理，范围 [-1, 1]。
         返回 (data_tensor, mask_tensor)，形状为 (T, 1, H, W) 和 (T, 1, H, W)。
         '''
+        # 获取样本 idx 对应的样本信息，每个样本包含T_in+T_out个时间步
         sample_info = self.samples[idx]
         
         if self.cache_data:
+            # 从缓存中读取数据和 mask，通过 global_idx 索引到正确的位置，数据是前面load_cache方法加载的
             start_idx = sample_info[0]
             end_idx = sample_info[-1] + 1
             data_array = self.cached_data[start_idx:end_idx].copy()
             mask_array = self.cached_masks[start_idx:end_idx].copy()
         else:
+            # 不开启缓存时，从文件中读取数据和 mask
             frames, masks = [], []
             for idx_item in sample_info:
                 if isinstance(idx_item, int):
@@ -1362,6 +1373,7 @@ class OceanSodaDataset(Dataset):
                     valid = ~(np.isnan(frame) | (np.abs(frame) > 1e30))
                     frames.append(np.where(valid, frame, 0.0))
                     masks.append(valid)
+            # 转换为 numpy 数组
             data_array = np.stack(frames, axis=0)
             mask_array = np.stack(masks, axis=0)
         
@@ -1379,11 +1391,13 @@ class OceanSodaDataset(Dataset):
              data_tensor = TF.resize(data_tensor, [self.h, self.w], antialias=True)
              mask_tensor = TF.resize(mask_tensor.float(), [self.h, self.w], interpolation=TF.InterpolationMode.NEAREST).bool()
         
-        # 分离输入输出
+        # 分离输入输出帧
         input_frames = data_tensor[:self.T_in]
         output_frames = data_tensor[self.T_in:self.T_in+self.T_out]
+        # mask只覆盖output_frames范围，用于损失计算时忽略
         output_mask = mask_tensor[self.T_in:self.T_in+self.T_out]
         
+        # 将时空网格转换为节点序列数据
         N = self.h * self.w
         pos = self.pos_grid.reshape(N, 2)
         fx = input_frames.squeeze(1).reshape(self.T_in, N).permute(1, 0)
@@ -1425,6 +1439,7 @@ class OceanSodaDataset(Dataset):
         创建所有可能的序列样本，每个样本长度为 seq_len。
         如果数据总帧数小于 seq_len，则抛出 ValueError。
         如果 data_list 中的元素是整数，则直接使用作为索引；否则使用 range(len(data_list))。
+
         '''
         num_frames = len(data_list)
         if num_frames < self.seq_len:
@@ -1469,6 +1484,7 @@ class ocean_soda(object):
         self.data_path = args.data_path
         self.T_in = args.T_in
         self.T_out = args.T_out
+        # 这里强制要求 seq_len 等于 T_in + T_out，确保样本长度固定
         self.seq_len = args.T_in + args.T_out
         self.batch_size = args.batch_size
         self.train_ratio = args.train_ratio if hasattr(args, 'train_ratio') else 0.8
