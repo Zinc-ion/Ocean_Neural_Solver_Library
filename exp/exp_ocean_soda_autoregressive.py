@@ -2,6 +2,7 @@ import os
 import torch
 import numpy as np
 import swanlab
+from tqdm import tqdm
 from exp.exp_basic import Exp_Basic
 from utils.loss import L2Loss
 
@@ -68,7 +69,7 @@ class Exp_Ocean_Soda_Autoregressive(Exp_Basic):
         num_batches = 0
         
         with torch.no_grad():
-            for pos, fx, y, mask in self.test_loader:
+            for pos, fx, y, mask in tqdm(self.test_loader, desc="Validation", leave=False):
                 pos, fx, y, mask = pos.cuda(), fx.cuda(), y.cuda(), mask.cuda()
                 
                 # 初始化预测列表
@@ -133,67 +134,72 @@ class Exp_Ocean_Soda_Autoregressive(Exp_Basic):
             self.model.train()
             train_mse_accum = 0
             train_full_accum = 0
+            train_step_accum = [0.0] * self.args.T_out
             num_batches = 0
             train_valid_points = 0
             train_total_points = 0
 
-            for pos, fx, y, mask in self.train_loader:
-                optimizer.zero_grad()
-                pos, fx, y, mask = pos.cuda(), fx.cuda(), y.cuda(), mask.cuda()
-                
-                curr_fx = fx
-                total_loss = 0
-                
-                preds = []
-                
-                # Autoregressive loop
-                for t in range(self.args.T_out):
-                    target_t = y[..., t*self.args.out_dim : (t+1)*self.args.out_dim]
-                    mask_t = mask[..., t*self.args.out_dim : (t+1)*self.args.out_dim]
+            with tqdm(self.train_loader, desc=f"Epoch {ep}/{self.args.epochs}") as train_pbar:
+                for pos, fx, y, mask in train_pbar:
+                    optimizer.zero_grad()
+                    pos, fx, y, mask = pos.cuda(), fx.cuda(), y.cuda(), mask.cuda()
                     
-                    if self.args.fun_dim == 0:
-                        model_fx = None
-                    else:
-                        model_fx = curr_fx
+                    curr_fx = fx
+                    total_loss = 0
                     
-                    im = self.model(pos, fx=model_fx)
-                    preds.append(im)
+                    preds = []
                     
-                    # Calculate loss for this step
-                    loss_t, valid_pts, total_pts = self.masked_mse(im, target_t, mask_t)
-                    total_loss += loss_t
-                    
-                    train_valid_points += valid_pts
-                    train_total_points += total_pts
+                    # Autoregressive loop
+                    for t in range(self.args.T_out):
+                        target_t = y[..., t*self.args.out_dim : (t+1)*self.args.out_dim]
+                        mask_t = mask[..., t*self.args.out_dim : (t+1)*self.args.out_dim]
+                        
+                        if self.args.fun_dim == 0:
+                            model_fx = None
+                        else:
+                            model_fx = curr_fx
+                        
+                        im = self.model(pos, fx=model_fx)
+                        preds.append(im)
+                        
+                        # Calculate loss for this step
+                        loss_t, valid_pts, total_pts = self.masked_mse(im, target_t, mask_t)
+                        train_step_accum[t] += loss_t.item()
+                        total_loss += loss_t
+                        
+                        train_valid_points += valid_pts
+                        train_total_points += total_pts
 
-                    # Update history
-                    if self.args.teacher_forcing:
-                        # Teacher forcing: use ground truth
-                        curr_fx = torch.cat((curr_fx[..., self.args.out_dim:], target_t), dim=-1)
-                    else:
-                        # Free running: use prediction
-                        curr_fx = torch.cat((curr_fx[..., self.args.out_dim:], im), dim=-1)
-                
-                # 拼接所有时间步的预测，计算完整序列的MSE full-loss
-                all_preds = torch.cat(preds, dim=-1)
-                full_loss, _, _ = self.masked_mse(all_preds, y, mask)
-                train_full_accum += full_loss.item()
+                        # Update history
+                        if self.args.teacher_forcing:
+                            # Teacher forcing: use ground truth
+                            curr_fx = torch.cat((curr_fx[..., self.args.out_dim:], target_t), dim=-1)
+                        else:
+                            # Free running: use prediction
+                            curr_fx = torch.cat((curr_fx[..., self.args.out_dim:], im), dim=-1)
+                    
+                    # 拼接所有时间步的预测，计算完整序列的MSE full-loss
+                    all_preds = torch.cat(preds, dim=-1)
+                    full_loss, _, _ = self.masked_mse(all_preds, y, mask)
+                    train_full_accum += full_loss.item()
 
-                # Backprop 这里只使用单步误差的累计来更新权重，full-loss的整个序列误差只用做展示
-                total_loss.backward()
-                
-                # 检查是否进行梯度裁剪
-                if self.args.max_grad_norm is not None:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
-                optimizer.step()
+                    # Backprop 这里只使用单步误差的累计来更新权重，full-loss的整个序列误差只用做展示
+                    total_loss.backward()
+                    
+                    # 检查是否进行梯度裁剪
+                    if self.args.max_grad_norm is not None:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
+                    optimizer.step()
 
-                if self.args.scheduler == 'OneCycleLR':
-                    scheduler.step()
-                
-                # 记录整个序列的平均MSE (total_loss 是 T_out 个步的 MSE 之和)
-                # 这里为了展示方便，我们记录平均每个步的MSE
-                train_mse_accum += total_loss.item() / self.args.T_out
-                num_batches += 1
+                    if self.args.scheduler == 'OneCycleLR':
+                        scheduler.step()
+                    
+                    # 记录整个序列的平均MSE (total_loss 是 T_out 个步的 MSE 之和)
+                    # 这里为了展示方便，我们记录平均每个步的MSE
+                    train_mse_accum += total_loss.item() / self.args.T_out
+                    num_batches += 1
+                    
+                    train_pbar.set_postfix(loss="{:.5f}".format(total_loss.item()))
 
             if self.args.scheduler == 'CosineAnnealingLR' or self.args.scheduler == 'StepLR':
                 scheduler.step()
@@ -208,13 +214,18 @@ class Exp_Ocean_Soda_Autoregressive(Exp_Basic):
             valid_loss = self.vali()
             print("Epoch {} Valid MSE: {:.5f}".format(ep, valid_loss))
 
-            swanlab.log({
+            # 记录每个时间步的MSE到swanlab
+            log_dict = {
                 "train_loss_step": avg_train_loss_step,
                 "train_loss_full": avg_train_loss_full,
                 "valid_points_ratio": 100 * train_valid_points / train_total_points if train_total_points > 0 else 0.0,
                 "valid_mse": valid_loss,
                 "epoch": ep
-            })
+            }
+            for t in range(self.args.T_out):
+                log_dict[f"train_loss_step_{t+1}"] = train_step_accum[t] / num_batches if num_batches > 0 else 0.0
+
+            swanlab.log(log_dict)
 
             if ep % 100 == 0:
                 if not os.path.exists('./checkpoints'):
@@ -246,7 +257,7 @@ class Exp_Ocean_Soda_Autoregressive(Exp_Basic):
             f.write("="*60 + "\n")
         
             with torch.no_grad():
-                for i, (pos, fx, y, mask) in enumerate(self.test_loader):
+                for i, (pos, fx, y, mask) in enumerate(tqdm(self.test_loader, desc="Testing")):
                     pos, fx, y, mask = pos.cuda(), fx.cuda(), y.cuda(), mask.cuda()
                     
                     preds = []
